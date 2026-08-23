@@ -1,0 +1,22 @@
+{
+  "name": "mini-agent",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@openrouter/sdk": "^1.2.51",
+    "dotenv": "^17.4.2",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0"
+  }
+}

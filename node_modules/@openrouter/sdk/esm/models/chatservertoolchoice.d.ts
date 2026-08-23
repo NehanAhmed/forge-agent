@@ -1,0 +1,18 @@
+import * as z from "zod/v4";
+/**
+ * OpenRouter extension: force a specific server tool by naming it directly in `tool_choice.type` instead of wrapping it in `{ type: "function", function: { name } }`.
+ */
+export type ChatServerToolChoice = {
+    /**
+     * OpenRouter server-tool type to force (e.g. `openrouter:web_search`, `web_search`, `web_search_preview`).
+     */
+    type: string;
+};
+/** @internal */
+export type ChatServerToolChoice$Outbound = {
+    type: string;
+};
+/** @internal */
+export declare const ChatServerToolChoice$outboundSchema: z.ZodType<ChatServerToolChoice$Outbound, ChatServerToolChoice>;
+export declare function chatServerToolChoiceToJSON(chatServerToolChoice: ChatServerToolChoice): string;
+//# sourceMappingURL=chatservertoolchoice.d.ts.map
