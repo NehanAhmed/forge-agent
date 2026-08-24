@@ -1,0 +1,114 @@
+{
+	"name": "ink-gradient",
+	"version": "4.0.1",
+	"description": "Gradient color component for Ink",
+	"license": "MIT",
+	"repository": "sindresorhus/ink-gradient",
+	"funding": "https://github.com/sponsors/sindresorhus",
+	"author": {
+		"name": "Sindre Sorhus",
+		"email": "sindresorhus@gmail.com",
+		"url": "https://sindresorhus.com"
+	},
+	"type": "module",
+	"exports": {
+		"types": "./dist/index.d.ts",
+		"default": "./dist/index.js"
+	},
+	"sideEffects": false,
+	"engines": {
+		"node": ">=20"
+	},
+	"scripts": {
+		"pretest": "npm run build",
+		"prepublish": "npm run build",
+		"test": "xo && ava",
+		"build": "tsc",
+		"example": "npm run build && node example.js"
+	},
+	"files": [
+		"dist"
+	],
+	"keywords": [
+		"ink-component",
+		"ink",
+		"component",
+		"gradient",
+		"gradients",
+		"color",
+		"colors",
+		"rainbow",
+		"style",
+		"styles",
+		"react",
+		"jsx",
+		"terminal",
+		"term",
+		"console",
+		"command-line"
+	],
+	"dependencies": {
+		"@types/gradient-string": "^1.1.6",
+		"gradient-string": "^3.0.0",
+		"strip-ansi": "^7.1.2"
+	},
+	"peerDependencies": {
+		"ink": ">=6",
+		"react": ">=19.2.0"
+	},
+	"devDependencies": {
+		"@sindresorhus/tsconfig": "^8.1.0",
+		"@types/react": "^19.2.10",
+		"ava": "^6.4.1",
+		"eslint-config-xo-react": "^0.29.0",
+		"eslint-plugin-react": "^7.37.5",
+		"eslint-plugin-react-hooks": "^7.0.1",
+		"ink": "^6.6.0",
+		"ink-big-text": "^2.0.0",
+		"ink-testing-library": "^4.0.0",
+		"react": "^19.2.4",
+		"ts-node": "^10.9.2",
+		"typescript": "^5.9.3",
+		"xo": "^1.2.3"
+	},
+	"ava": {
+		"color": true,
+		"extensions": {
+			"ts": "module",
+			"tsx": "module"
+		},
+		"nodeArguments": [
+			"--loader=ts-node/esm"
+		]
+	},
+	"xo": [
+		{
+			"react": true,
+			"rules": {
+				"react/prop-types": "off",
+				"react/react-in-jsx-scope": "off"
+			}
+		},
+		{
+			"files": [
+				"test.tsx"
+			],
+			"rules": {
+				"@stylistic/function-paren-newline": "off",
+				"@typescript-eslint/no-unsafe-argument": "off",
+				"@typescript-eslint/no-unsafe-assignment": "off",
+				"@typescript-eslint/no-unsafe-call": "off",
+				"@typescript-eslint/no-unsafe-return": "off",
+				"react/prefer-read-only-props": "off"
+			}
+		},
+		{
+			"files": [
+				"example.js"
+			],
+			"rules": {
+				"@stylistic/function-paren-newline": "off"
+			}
+		}
+	]
+}
