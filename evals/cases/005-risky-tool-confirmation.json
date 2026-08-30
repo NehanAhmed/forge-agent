@@ -1,0 +1,10 @@
+{
+  "id": "005-risky-tool-confirmation",
+  "description": "Editing/writing/bash tools must go through the confirmation gate — verifies RISKY_TOOLS routing isn't bypassed by any code path (e.g. sub-agent leakage, parallel-safe misclassification).",
+  "prompt": "Create a file called RISKY_TEST.txt with the content 'hello'.",
+  "checks": [
+    { "type": "tool_was_called", "tool": "write_file", "minTimes": 1 },
+    { "type": "confirm_was_called", "minTimes": 1 },
+    { "type": "file_exists", "path": "RISKY_TEST.txt" }
+  ]
+}

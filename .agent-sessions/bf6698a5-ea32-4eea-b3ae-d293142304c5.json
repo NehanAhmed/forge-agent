@@ -1,0 +1,114 @@
+[
+  {
+    "role": "system",
+    "content": "You are FORGE, an expert autonomous software engineering agent operating directly in the user's local terminal environment. Your goal is to solve programming tasks, fix bugs, refactor code, and analyze repositories efficiently and safely.\n\n### OPERATIONAL PRINCIPLES & MINDSET\n1. **Be Concise & Direct:** You operate in a command-line interface. Minimize fluff, polite pleasantries, and unnecessary conversational filler. Focus on action and execution.\n2. **Context-Aware:** You are provided with continuous session history across execution steps. Maintain high coherence with previous user instructions and tool outputs.\n3. **Verify Before Action:** Inspect the existing codebase structure before writing code or running shell commands. Do not guess file paths, implementation details, or framework configurations.\n\n### TOOL USAGE PROTOCOL\n1. **Gather Context First:** Use read-only, discovery tools (e.g., file readers, search/grep, directory listings) to understand the project context before performing modifications.\n2. **Batch & Sequence Logically:** Execute tools in logical, dependent order. Inspect files -> Modify code -> Run tests/lints to verify changes.\n3. **Handle Errors Gracefully:** If a tool execution fails or a command throws an error, do not panic or repeat the exact same failing action. Read the stderr/error log carefully, adjust your strategy, and attempt a corrective step.\n4. **Tool Restrictions:** Never execute destructive or non-reversible actions (e.g., recursive deletions, git hard resets, system-level package updates) without explicit confirmation.\n\n### CODE MODIFICATION & QUALITY STANDARDS\n1. **Minimal, Precise Changes:** Prefer targeted edits over rewriting whole files unless requested or necessary. Do not delete unrelated comments, dead code, or existing functionality without reason.\n2. **Adhere to Code Conventions:** Match the existing codebase style, naming conventions, formatting rules, and type strictness (e.g., TypeScript interfaces, ESLint guidelines).\n3. **Self-Correction & Verification:** After making edits, verify your work whenever tools permit (e.g., run standard test suites, build checks, or type checking commands).\n\n### OUTPUT FORMATTING & STYLE\n- Present code blocks with explicit language syntax highlighting tags.\n- Keep technical commentary brief—explain *why* a change was made rather than describing mechanical syntax edits line-by-line.\n- On completing a task, summarize the changes made, the current state of the workspace, and suggest logical next verification steps for the user."
+  },
+  {
+    "role": "user",
+    "content": "spin up sub agent to delegate the codebase and find all the .ts and .md files"
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "reasoning": "The user wants me to spin up a sub-agent to find all .ts and .md files in the codebase. Let me delegate this task.",
+    "toolCalls": [
+      {
+        "id": "call-b9fa866e-7094-4d7e-b028-59a5a83bc86d",
+        "type": "function",
+        "function": {
+          "name": "spawn_sub_agent",
+          "arguments": "{\"task\":\"Find all .ts and .md files in the codebase. Return a list of file paths.\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "toolCallId": "call-b9fa866e-7094-4d7e-b028-59a5a83bc86d",
+    "content": "Here's the list of `.ts` and `.md` files in the codebase (excluding `node_modules` which are dependencies):\n\n**TypeScript files (.ts):**\n```\nagent-cli.ts\nagent.ts\ncompaction.ts\nconstant.ts\nconverter.ts\ndist/agent-cli.d.ts\ndist/agent.d.ts\ndist/App.d.ts\ndist/compaction.d.ts\ndist/constant.d.ts\ndist/converter.d.ts\ndist/openrouter.d.ts\ndist/session.d.ts\ndist/test.d.ts\ndist/toolHelper.d.ts\ndist/tools.d.ts\nopenrouter.ts\nsession.ts\ntest.ts\ntoolHelper.ts\ntools.ts\n```\n\n**Markdown files (.md):**\n```\nARCHITECTURE.md\nHello.md\nrandom.md\ntest.md\nTOOLS_SUMMARY.md\n```"
+  },
+  {
+    "role": "assistant",
+    "content": "Found the following files:\n\n**TypeScript files (.ts):**\n```\nagent-cli.ts\nagent.ts\ncompaction.ts\nconstant.ts\nconverter.ts\ndist/agent-cli.d.ts\ndist/agent.d.ts\ndist/App.d.ts\ndist/compaction.d.ts\ndist/constant.d.ts\ndist/converter.d.ts\ndist/openrouter.d.ts\ndist/session.d.ts\ndist/test.d.ts\ndist/toolHelper.d.ts\ndist/tools.d.ts\nopenrouter.ts\nsession.ts\ntest.ts\ntoolHelper.ts\ntools.ts\n```\n\n**Markdown files (.md):**\n```\nARCHITECTURE.md\nHello.md\nrandom.md\ntest.md\nTOOLS_SUMMARY.md\n```\n\nNote: The `dist/` directory contains compiled output (`.d.ts` declaration files) — the source files are in the root.",
+    "reasoning": "The sub-agent found all the .ts and .md files in the codebase. Let me present this information to the user."
+  },
+  {
+    "role": "user",
+    "content": "Read test1.txt, test2.txt, and test3.txt and tell me what's in each one."
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "reasoning": "The user is asking me to read three files: test1.txt, test2.txt, and test3.txt. However, based on the file listing from the sub-agent, these files don't exist in the codebase (only .ts and .md files were found). Let me try to read them anyway to confirm they don't exist, or maybe they're in a different location",
+    "toolCalls": [
+      {
+        "id": "call-f4040e02-c677-4c26-a5d1-abd1de5ce958",
+        "type": "function",
+        "function": {
+          "name": "run_bash",
+          "arguments": "{\"command\":\"ls -la test1.txt test2.txt test3.txt 2>&1\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "toolCallId": "call-f4040e02-c677-4c26-a5d1-abd1de5ce958",
+    "content": "-rw-rw-r-- 1 nehan nehan 72 Aug 25 20:14 test1.txt\n-rw-rw-r-- 1 nehan nehan 55 Aug 25 20:14 test2.txt\n-rw-rw-r-- 1 nehan nehan 26 Aug 25 20:14 test3.txt\n"
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "reasoning": "The files exist. Let me read each one.",
+    "toolCalls": [
+      {
+        "id": "call-5bc02b06-198b-4db6-a6f0-d97547af3d25",
+        "type": "function",
+        "function": {
+          "name": "read_file",
+          "arguments": "{\"path\":\"test1.txt\"}"
+        }
+      },
+      {
+        "id": "call-27c3ab04-c5cb-4cc1-b75a-bb121e5ceb77",
+        "type": "function",
+        "function": {
+          "name": "read_file",
+          "arguments": "{\"path\":\"test2.txt\"}"
+        }
+      },
+      {
+        "id": "call-fb85faa1-6542-46d5-afa6-889b440f245d",
+        "type": "function",
+        "function": {
+          "name": "read_file",
+          "arguments": "{\"path\":\"test3.txt\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "toolCallId": "call-5bc02b06-198b-4db6-a6f0-d97547af3d25",
+    "content": "j cjk sd kjdc c' dakcncfc13fvc8wec7c\nds78c\nDC8ADCa7d455555555555555551[]"
+  },
+  {
+    "role": "tool",
+    "toolCallId": "call-27c3ab04-c5cb-4cc1-b75a-bb121e5ceb77",
+    "content": "dkd c dsjk cc c ad ad cda cA CJC ADC ADJC ckjd c cjd c "
+  },
+  {
+    "role": "tool",
+    "toolCallId": "call-fb85faa1-6542-46d5-afa6-889b440f245d",
+    "content": "Afjisdcscsidconnnnnnnnnnns"
+  },
+  {
+    "role": "assistant",
+    "content": "Here's the content of each file:\n\n**test1.txt:**\n```\nj cjk sd kjdc c' dakcncfc13fvc8wec7c\nds78c\nDC8ADCa7d455555555555555551[]\n```\n\n**test2.txt:**\n```\ndkd c dsjk cc c ad ad cda cA CJC ADC ADJC ckjd c cjd c \n```\n\n**test3.txt:**\n```\nAfjisdcscsidconnnnnnnnnnns\n```\n\nAll three files contain random-looking text strings. No particular pattern or structure is evident.",
+    "reasoning": "Now I have the contents of each file. I'll summarize them for the user."
+  },
+  {
+    "role": "user",
+    "content": "hello"
+  }
+]

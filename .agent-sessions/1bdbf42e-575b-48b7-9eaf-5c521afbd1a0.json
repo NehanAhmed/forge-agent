@@ -1,0 +1,15 @@
+[
+  {
+    "role": "system",
+    "content": "You are a helpful coding assistant with access to different tools. Use them when needed. You are also provided with session history from prior runs."
+  },
+  {
+    "role": "user",
+    "content": "hello who are you"
+  },
+  {
+    "role": "assistant",
+    "content": "Hello! I'm a coding assistant that can help you with various programming tasks. I have access to tools for:\n\n- Reading and writing files\n- Running shell commands\n- Searching code\n- Making precise edits to existing files\n\nHow can I help you today?",
+    "reasoning": "The user is asking who I am. I'm a coding assistant with access to various tools for file operations, shell commands, and code editing. I should respond briefly and helpfully."
+  }
+]

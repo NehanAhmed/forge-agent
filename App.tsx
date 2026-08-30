@@ -6,25 +6,46 @@ import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
 import Gradient from 'ink-gradient';
 import { runAgent, type LogEvent } from './agent-cli.js';
-import { loadSession, type Message } from './session.js';
-import { SYSTEM_PROMPT, MODEL } from './constant.js';
+import { SYSTEM_PROMPT, MODEL, AGENT_NAME } from './constant.js';
+import {
+  loadSession,
+  createNewSessionId,
+  getLatestSessionId,
+  type Message
+} from './session.js';
+import { messagesToEntries, type DisplayEntry } from './converter.js';
 
-type DisplayEntry = {
-  id: number;
-  kind: 'user' | 'reasoning' | 'tool_call' | 'tool_result' | 'assistant' | 'info';
-  text: string;
-};
+function resolveSessionId(): { sessionId: string; isResumed: boolean } {
+  const args = process.argv.slice(2);
+  const resumeIdx = args.indexOf('--resume');
+
+  if (resumeIdx !== -1) {
+    const specifiedId = args[resumeIdx + 1];
+    const targetId = specifiedId && !specifiedId.startsWith('--')
+      ? specifiedId
+      : getLatestSessionId();
+
+    if (targetId) {
+      return { sessionId: targetId, isResumed: true };
+    }
+  }
+
+  return { sessionId: createNewSessionId(), isResumed: false };
+}
 
 let entryId = 0;
 
-function Header() {
+function Header({ sessionId }: { sessionId: string }) {
   return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Gradient name="pastel">
-        <Text bold>▲ AGENT</Text>
-      </Gradient>
-      <Text dimColor>model: {MODEL}</Text>
+    <Box flexDirection="column" padding={1}>
+      <Box flexDirection="column" marginBottom={1}>
+        <Gradient name="pastel">
+          <Text bold>▲ {AGENT_NAME}</Text>
+        </Gradient>
+        <Text dimColor>model: {MODEL} | session: {sessionId.slice(0, 8)}</Text>
+      </Box>
     </Box>
+
   );
 }
 
@@ -75,16 +96,19 @@ function EntryLine({ entry }: { entry: DisplayEntry }) {
 }
 
 function App() {
-  const [entries, setEntries] = useState<DisplayEntry[]>([]);
+  const confirmResolverRef = useRef<((val: boolean) => void) | null>(null);
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState<string | null>(null);
+  const sessionRef = useRef(resolveSessionId());
+  const sessionId = sessionRef.current.sessionId;
 
   const messagesRef = useRef<Message[]>(initMessages());
-  const confirmResolverRef = useRef<((val: boolean) => void) | null>(null);
-
+  const [entries, setEntries] = useState<DisplayEntry[]>(() => {
+    return messagesToEntries(messagesRef.current);
+  });
   function initMessages(): Message[] {
-    const loaded = loadSession();
+    const loaded = loadSession(sessionId);
     if (loaded.length === 0) {
       loaded.push({ role: 'system', content: SYSTEM_PROMPT });
     }
@@ -104,6 +128,18 @@ function App() {
         return updated;
       }
       return [...prev, { id: entryId++, kind: 'assistant', text: delta }];
+    });
+  }
+
+  function appendToLastReasoning(delta: string) {
+    setEntries(prev => {
+      const last = prev[prev.length - 1];
+      if (last?.kind === 'reasoning') {
+        const updated = [...prev];
+        updated[updated.length - 1] = { ...last, text: last.text + delta };
+        return updated;
+      }
+      return [...prev, { id: entryId++, kind: 'reasoning', text: delta }];
     });
   }
 
@@ -140,8 +176,8 @@ function App() {
 
     const onLog = (event: LogEvent) => {
       switch (event.type) {
-        case 'reasoning':
-          pushEntry('reasoning', event.content);
+        case 'reasoning_delta':
+          appendToLastReasoning(event.content);
           break;
         case 'tool_call':
           pushEntry('tool_call', `${event.name}(${JSON.stringify(event.args)})`);
@@ -157,18 +193,16 @@ function App() {
           break;
       }
     };
-
-    messagesRef.current = await runAgent(messagesRef.current, {
+    messagesRef.current = await runAgent(sessionId, messagesRef.current, {
       onLog,
       onConfirm: handleConfirm,
     });
-
     setIsProcessing(false);
   }
 
   return (
     <Box flexDirection="column" padding={1}>
-      <Header />
+      <Header sessionId={sessionId} />
 
       <Box flexDirection="column">
         {entries.map(entry => (

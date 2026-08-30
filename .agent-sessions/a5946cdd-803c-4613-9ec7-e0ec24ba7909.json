@@ -1,0 +1,50 @@
+[
+  {
+    "role": "system",
+    "content": "You are FORGE, an expert autonomous software engineering agent operating directly in the user's local terminal environment. Your goal is to solve programming tasks, fix bugs, refactor code, and analyze repositories efficiently and safely.\n\n### OPERATIONAL PRINCIPLES & MINDSET\n1. **Be Concise & Direct:** You operate in a command-line interface. Minimize fluff, polite pleasantries, and unnecessary conversational filler. Focus on action and execution.\n2. **Context-Aware:** You are provided with continuous session history across execution steps. Maintain high coherence with previous user instructions and tool outputs.\n3. **Verify Before Action:** Inspect the existing codebase structure before writing code or running shell commands. Do not guess file paths, implementation details, or framework configurations.\n\n### TOOL USAGE PROTOCOL\n1. **Gather Context First:** Use read-only, discovery tools (e.g., file readers, search/grep, directory listings) to understand the project context before performing modifications.\n2. **Batch & Sequence Logically:** Execute tools in logical, dependent order. Inspect files -> Modify code -> Run tests/lints to verify changes.\n3. **Handle Errors Gracefully:** If a tool execution fails or a command throws an error, do not panic or repeat the exact same failing action. Read the stderr/error log carefully, adjust your strategy, and attempt a corrective step.\n4. **Tool Restrictions:** Never execute destructive or non-reversible actions (e.g., recursive deletions, git hard resets, system-level package updates) without explicit confirmation.\n\n### CODE MODIFICATION & QUALITY STANDARDS\n1. **Minimal, Precise Changes:** Prefer targeted edits over rewriting whole files unless requested or necessary. Do not delete unrelated comments, dead code, or existing functionality without reason.\n2. **Adhere to Code Conventions:** Match the existing codebase style, naming conventions, formatting rules, and type strictness (e.g., TypeScript interfaces, ESLint guidelines).\n3. **Self-Correction & Verification:** After making edits, verify your work whenever tools permit (e.g., run standard test suites, build checks, or type checking commands).\n\n### OUTPUT FORMATTING & STYLE\n- Present code blocks with explicit language syntax highlighting tags.\n- Keep technical commentary brief—explain *why* a change was made rather than describing mechanical syntax edits line-by-line.\n- On completing a task, summarize the changes made, the current state of the workspace, and suggest logical next verification steps for the user."
+  },
+  {
+    "role": "user",
+    "content": "spin up the sub agent to search the codebase for all the .md files."
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "reasoning": "The user wants me to spin up a sub-agent to search the codebase for all .md files. This is a good use case for the sub-agent since it involves searching through potentially many files and returning a summary.",
+    "toolCalls": [
+      {
+        "id": "call-4fd92581-6052-4200-9ed4-18ebb334f217",
+        "type": "function",
+        "function": {
+          "name": "spawn_subagent",
+          "arguments": "{\"task\":\"Search the entire codebase for all .md files (Markdown files) and return a list of their paths.\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "toolCallId": "call-4fd92581-6052-4200-9ed4-18ebb334f217",
+    "content": "ERROR: No executor found for tool: spawn_subagent"
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "reasoning": "The spawn_subagent tool failed. Let me try using run_bash with find to search for .md files directly",
+    "toolCalls": [
+      {
+        "id": "call-49cd4a6a-3799-4e0c-a0f1-00d736bc5bed",
+        "type": "function",
+        "function": {
+          "name": "run_bash",
+          "arguments": "{\"command\":\"find . -name \\\"*.md\\\" -type f 2>/dev/null | sort\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "toolCallId": "call-49cd4a6a-3799-4e0c-a0f1-00d736bc5bed",
+    "content": "./ARCHITECTURE.md\n./Hello.md\n./node_modules/@alcalzone/ansi-tokenize/README.md\n./node_modules/ansi-escapes/readme.md\n./node_modules/ansi-regex/readme.md\n./node_modules/ansi-styles/readme.md\n./node_modules/auto-bind/readme.md\n./node_modules/cfonts/README.md\n./node_modules/chalk/readme.md\n./node_modules/cli-boxes/readme.md\n./node_modules/cli-cursor/readme.md\n./node_modules/cli-spinners/readme.md\n./node_modules/cli-truncate/readme.md\n./node_modules/code-excerpt/readme.md\n./node_modules/convert-to-spaces/readme.md\n./node_modules/csstype/README.md\n./node_modules/define-property/README.md\n./node_modules/dotenv/CHANGELOG.md\n./node_modules/dotenv/README-es.md\n./node_modules/dotenv/README.md\n./node_modules/dotenv/SECURITY.md\n./node_modules/dotenv/skills/dotenv/SKILL.md\n./node_modules/dotenv/skills/dotenvx/SKILL.md\n./node_modules/environment/readme.md\n./node_modules/esbuild/LICENSE.md\n./node_modules/@esbuild/linux-x64/README.md\n./node_modules/esbuild/README.md\n./node_modules/escape-string-regexp/readme.md\n./node_modules/es-toolkit/CHANGELOG.md\n./node_modules/es-toolkit/README.md\n./node_modules/function-bind/CHANGELOG.md\n./node_modules/function-bind/.github/SECURITY.md\n./node_modules/function-bind/README.md\n./node_modules/get-east-asian-width/readme.md\n./node_modules/gradient-string/README.md\n./node_modules/has-flag/readme.md\n./node_modules/hasown/CHANGELOG.md\n./node_modules/hasown/README.md\n./node_modules/indent-string/readme.md\n./node_modules/ink-big-text/readme.md\n./node_modules/ink-gradient/readme.md\n./node_modules/ink/readme.md\n./node_modules/ink-spinner/readme.md\n./node_modules/ink-text-input/node_modules/type-fest/readme.md\n./node_modules/ink-text-input/readme.md\n./node_modules/is-accessor-descriptor/CHANGELOG.md\n./node_modules/is-accessor-descriptor/README.md\n./node_modules/is-buffer/README.md\n./node_modules/is-data-descriptor/CHANGELOG.md\n./node_modules/is-data-descriptor/README.md\n./node_modules/is-descriptor/CHANGELOG.md\n./node_modules/is-descriptor/README.md\n./node_modules/is-fullwidth-code-point/readme.md\n./node_modules/is-in-ci/readme.md\n./node_modules/is-number/README.md\n./node_modules/js-tokens/CHANGELOG.md\n./node_modules/js-tokens/README.md\n./node_modules/kind-of/README.md\n./node_modules/loose-envify/README.md\n./node_modules/mimic-fn/readme.md\n./node_modules/object-assign/readme.md\n./node_modules/onetime/readme.md\n./node_modules/@openrouter/sdk/FUNCTIONS.md\n./node_modules/@openrouter/sdk/LICENSE.md\n./node_modules/@openrouter/sdk/README.md\n./node_modules/@openrouter/sdk/RUNTIMES.md\n./node_modules/patch-console/readme.md\n./node_modules/prop-types/README.md\n./node_modules/react-is/README.md\n./node_modules/react/README.md\n./node_modules/react-reconciler/README.md\n./node_modules/restore-cursor/readme.md\n./node_modules/scheduler/README.md\n./node_modules/signal-exit/README.md\n./node_modules/slice-ansi/readme.md\n./node_modules/stack-utils/LICENSE.md\n./node_modules/stack-utils/readme.md\n./node_modules/string-width/readme.md\n./node_modules/strip-ansi/readme.md\n./node_modules/supports-color/readme.md\n./node_modules/tagged-tag/readme.md\n./node_modules/terminal-size/readme.md\n./node_modules/tinycolor2/README.md\n./node_modules/tinygradient/README.md\n./node_modules/tsx/README.md\n./node_modules/type-fest/readme.md\n./node_modules/typescript/README.md\n./node_modules/@typescript/typescript-linux-x64/README.md\n./node_modules/typescript/vendor/vscode-jsonrpc/README.md\n./node_modules/@types/gradient-string/README.md\n./node_modules/@types/node/README.md\n./node_modules/@types/react/README.md\n./node_modules/@types/tinycolor2/README.md\n./node_modules/undici-types/README.md\n./node_modules/widest-line/readme.md\n./node_modules/window-size/README.md\n./node_modules/wrap-ansi/readme.md\n./node_modules/ws/README.md\n./node_modules/yoga-layout/README.md\n./node_modules/zod/README.md\n./random.md\n./test.md\n./TOOLS_SUMMARY.md\n"
+  }
+]

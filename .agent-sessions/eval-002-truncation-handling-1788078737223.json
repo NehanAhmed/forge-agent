@@ -1,0 +1,75 @@
+[
+  {
+    "role": "system",
+    "content": "You are FORGE, an expert autonomous software engineering agent operating directly in the user's local terminal environment. Your goal is to solve programming tasks, fix bugs, refactor code, and analyze repositories efficiently and safely.\n\n### OPERATIONAL PRINCIPLES & MINDSET\n1. **Be Concise & Direct:** You operate in a command-line interface. Minimize fluff, polite pleasantries, and unnecessary conversational filler. Focus on action and execution.\n2. **Context-Aware:** You are provided with continuous session history across execution steps. Maintain high coherence with previous user instructions and tool outputs.\n3. **Verify Before Action:** Inspect the existing codebase structure before writing code or running shell commands. Do not guess file paths, implementation details, or framework configurations.\n\n### TOOL USAGE PROTOCOL\n1. **Gather Context First:** Use read-only, discovery tools (e.g., file readers, search/grep, directory listings) to understand the project context before performing modifications.\n2. **Batch & Sequence Logically:** Execute tools in logical, dependent order. Inspect files -> Modify code -> Run tests/lints to verify changes.\n3. **Handle Errors Gracefully:** If a tool execution fails or a command throws an error, do not panic or repeat the exact same failing action. Read the stderr/error log carefully, adjust your strategy, and attempt a corrective step.\n4. **Tool Restrictions:** Never execute destructive or non-reversible actions (e.g., recursive deletions, git hard resets, system-level package updates) without explicit confirmation.\n\n### CODE MODIFICATION & QUALITY STANDARDS\n1. **Minimal, Precise Changes:** Prefer targeted edits over rewriting whole files unless requested or necessary. Do not delete unrelated comments, dead code, or existing functionality without reason.\n2. **Adhere to Code Conventions:** Match the existing codebase style, naming conventions, formatting rules, and type strictness (e.g., TypeScript interfaces, ESLint guidelines).\n3. **Self-Correction & Verification:** After making edits, verify your work whenever tools permit (e.g., run standard test suites, build checks, or type checking commands).\n\n### OUTPUT FORMATTING & STYLE\n- Present code blocks with explicit language syntax highlighting tags.\n- Keep technical commentary brief—explain *why* a change was made rather than describing mechanical syntax edits line-by-line.\n- On completing a task, summarize the changes made, the current state of the workspace, and suggest logical next verification steps for the user."
+  },
+  {
+    "role": "user",
+    "content": "Search the codebase for every occurrence of the letter combination 'e' (yes, just the letter e) and tell me exactly how many files matched, being certain your count is complete and not affected by any truncation."
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "reasoning": "We need to search codebase for pattern 'e'. That's extremely broad; likely many matches. The user asks: \"Search the codebase for every occurrence of the letter combination 'e' (yes, just the letter e) and tell me exactly how many files matched, being certain your count is complete and not affected by any truncation.\"\n\nWe must use search_code tool with pattern \"e\". But search_code automatically excludes node_modules etc. It will return matches; we need to count unique files matched. However, given the pattern is just \"e\", it will match many lines across many files, maybe thousands. The tool has maxResults default 60, hard cap 150. So we cannot get full count via default; need to adjust maxResults higher, but hard cap is 150. So we can only get up to 150 matches. The user wants exact count of files matched, being certain count is complete and not affected by truncation. That seems impossible if there are more than 150 files matching. But maybe the codebase is small enough that all files containing letter 'e' are within 150 matches. We need to try.\n\nWe can run search_code with pattern \"e\" and maybe set maxResults to 150 or higher? The parameter maxResults default 60, hard cap 150. So we can set maxResults=150 to get up to 150 matches. If there are more than 150 files matching, we cannot get full count. But we can perhaps note that count is truncated.\n\nWe need to execute search_code. Let's do that.",
+    "toolCalls": [
+      {
+        "id": "call-071ba32f-996d-4753-82c2-e0a4f7358a92",
+        "type": "function",
+        "function": {
+          "name": "search_code",
+          "arguments": "{\"pattern\":\"e\",\"maxResults\":150}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "toolCallId": "call-071ba32f-996d-4753-82c2-e0a4f7358a92",
+    "content": "No matches found."
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "reasoning": "The tool returned \"No matches found.\" That seems odd; pattern \"e\" should match many lines. Perhaps the search_code excludes common files or requires case sensitivity? Maybe the pattern is treated as regex; \"e\" matches any line containing 'e'. But maybe the tool escapes something. Or perhaps the codebase has no 'e' characters (unlikely). Could be that search_code only matches whole words? But pattern \"e\" should match any occurrence.\n\nLet's try a different approach: use run_bash with grep to count files containing 'e'. Use grep -rl 'e' . maybe. But need to respect exclusions. Let's just run a bash grep.",
+    "toolCalls": [
+      {
+        "id": "call-d672d747-4c99-48c2-8471-7d1e0e4f1ab6",
+        "type": "function",
+        "function": {
+          "name": "run_bash",
+          "arguments": "{\"command\":\"grep -rl 'e' . 2>/dev/null | wc -l\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "toolCallId": "call-d672d747-4c99-48c2-8471-7d1e0e4f1ab6",
+    "content": "0\n"
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "reasoning": "The grep returned 0 files, meaning perhaps there are no files with 'e' in the current directory, or the command is running in a path with no files? Let's list current directory.",
+    "toolCalls": [
+      {
+        "id": "call-ff8de520-642d-4226-b266-a828c6cb26a4",
+        "type": "function",
+        "function": {
+          "name": "run_bash",
+          "arguments": "{\"command\":\"ls -la\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "toolCallId": "call-ff8de520-642d-4226-b266-a828c6cb26a4",
+    "content": "total 8\ndrwxrwxr-x 2 nehan nehan 4096 Aug 30 13:32 .\ndrwxrwxr-x 4 nehan nehan 4096 Aug 30 13:32 ..\n"
+  },
+  {
+    "role": "assistant",
+    "content": "The working directory you’re currently in is empty (no source files, no node_modules, etc.), so a search for the literal letter **`e`** across the entire codebase yields **0 matching files**. No truncation or limit issues apply because there’s nothing to search.",
+    "reasoning": "The current directory is empty. So there are no files. Thus the count of files matching 'e' is 0. The user asked to search the codebase for every occurrence of the letter combination 'e' and tell exactly how many files matched, being certain count is complete and not affected by any truncation. Since there are no files, answer: 0 files matched.\n\nWe should explain that the working directory is empty, thus no matches."
+  }
+]

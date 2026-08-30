@@ -83,4 +83,42 @@ export const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "spawn_sub_agent",
+      description:
+        "Delegate a self-contained investigative task to a sub-agent with a fresh, isolated context. Use this for tasks that would pollute your context with a lot of intermediate noise — e.g. 'search the codebase for all usages of X', 'read through these 5 files and summarize the auth flow', 'find where Y is configured'. The sub-agent has read-only tools (read_file, run_bash) and returns a single summarized answer — you will NOT see its intermediate steps. Do not use this for tasks that require writing/editing files, or for simple single-file lookups you can do directly.",
+      parameters: {
+        type: "object",
+        properties: {
+          task: {
+            type: "string",
+            description: "A clear, self-contained description of what the sub-agent should find/do and report back. It has no knowledge of the current conversation, so include all necessary context.",
+          },
+        },
+        required: ["task"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_code",
+      description:
+        "Search the codebase for a text pattern using ripgrep (regex supported). Automatically excludes node_modules, dist, build output, and lockfiles — you do not need to add exclusions yourself. Use this instead of grep/rg via run_bash. Returns matching file paths and line numbers with surrounding context.",
+      parameters: {
+        type: "object",
+        properties: {
+          pattern: { type: "string", description: "Text or regex pattern to search for." },
+          path: { type: "string", description: "Directory to search in. Defaults to current directory." },
+          maxResults: {
+            type: "number",
+            description: "Maximum total matches to return (default 60, hard cap 150). Prefer narrowing your search pattern or path over raising this — only increase it if you've confirmed the results are truncated and a narrower search isn't feasible.",
+          },
+        },
+        required: ["pattern"],
+      },
+    },
+  }
 ];

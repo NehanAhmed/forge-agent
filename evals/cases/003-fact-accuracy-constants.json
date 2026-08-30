@@ -1,0 +1,10 @@
+{
+  "id": "003-fact-accuracy-constants",
+  "description": "Agent must report the exact, correct value from a file it read, not a plausible-sounding invented number.",
+  "prompt": "Read constant.ts and tell me the exact numeric value of COMPACTION_THRESHOLD_TOKENS and COMPACTION_KEEP_RECENT.",
+  "checks": [
+    { "type": "tool_was_called", "tool": "read_file", "minTimes": 1 },
+    { "type": "content_matches", "pattern": "2000" },
+    { "type": "content_matches", "pattern": "5\\b" }
+  ]
+}

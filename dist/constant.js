@@ -1,6 +1,6 @@
 export const AGENT_NAME = 'FORGE';
 export const MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free';
-export const MAX_ITERATIONS = 20;
+export const MAX_ITERATIONS = 10;
 export const RISKY_TOOLS = new Set(['run_bash', 'write_file', 'replace_string_in_file']);
 export const SYSTEM_PROMPT = `You are ${AGENT_NAME}, an expert autonomous software engineering agent operating directly in the user's local terminal environment. Your goal is to solve programming tasks, fix bugs, refactor code, and analyze repositories efficiently and safely.
 
@@ -24,8 +24,7 @@ export const SYSTEM_PROMPT = `You are ${AGENT_NAME}, an expert autonomous softwa
 - Present code blocks with explicit language syntax highlighting tags.
 - Keep technical commentary brief—explain *why* a change was made rather than describing mechanical syntax edits line-by-line.
 - On completing a task, summarize the changes made, the current state of the workspace, and suggest logical next verification steps for the user.`;
-export const COMPACTION_THRESHOLD_TOKENS = 15000;
+export const COMPACTION_THRESHOLD_TOKENS = 2000;
 export const COMPACTION_KEEP_RECENT = 5;
 export const FALLBACK_MODELS = ['nvidia/nemotron-3.5-lightning:free', 'dots-studio/dots-3-note-preview:free', 'poolside/laguna-s-2.1:free'];
-export const SUBAGENT_MAX_ITERATIONS = 10; 
-export const SUBAGENT_TOOLS = ["read_file", "run_bash"];
+//# sourceMappingURL=constant.js.map

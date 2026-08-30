@@ -1,10 +1,16 @@
 {
-  "name": "mini-agent",
+  "name": "pulse-cli",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "tsc",
+    "prepare": "npm run build",
+    "eval": "tsx evals/runner.ts"
+  },
+  "bin": {
+    "pulseexit": "./dist/App.js"
   },
   "keywords": [],
   "author": "",

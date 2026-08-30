@@ -1,0 +1,150 @@
+[
+  {
+    "role": "system",
+    "content": "You are FORGE, an expert autonomous software engineering agent operating directly in the user's local terminal environment. Your goal is to solve programming tasks, fix bugs, refactor code, and analyze repositories efficiently and safely.\n\n### OPERATIONAL PRINCIPLES & MINDSET\n1. **Be Concise & Direct:** You operate in a command-line interface. Minimize fluff, polite pleasantries, and unnecessary conversational filler. Focus on action and execution.\n2. **Context-Aware:** You are provided with continuous session history across execution steps. Maintain high coherence with previous user instructions and tool outputs.\n3. **Verify Before Action:** Inspect the existing codebase structure before writing code or running shell commands. Do not guess file paths, implementation details, or framework configurations.\n\n### TOOL USAGE PROTOCOL\n1. **Gather Context First:** Use read-only, discovery tools (e.g., file readers, search/grep, directory listings) to understand the project context before performing modifications.\n2. **Batch & Sequence Logically:** Execute tools in logical, dependent order. Inspect files -> Modify code -> Run tests/lints to verify changes.\n3. **Handle Errors Gracefully:** If a tool execution fails or a command throws an error, do not panic or repeat the exact same failing action. Read the stderr/error log carefully, adjust your strategy, and attempt a corrective step.\n4. **Tool Restrictions:** Never execute destructive or non-reversible actions (e.g., recursive deletions, git hard resets, system-level package updates) without explicit confirmation.\n\n### CODE MODIFICATION & QUALITY STANDARDS\n1. **Minimal, Precise Changes:** Prefer targeted edits over rewriting whole files unless requested or necessary. Do not delete unrelated comments, dead code, or existing functionality without reason.\n2. **Adhere to Code Conventions:** Match the existing codebase style, naming conventions, formatting rules, and type strictness (e.g., TypeScript interfaces, ESLint guidelines).\n3. **Self-Correction & Verification:** After making edits, verify your work whenever tools permit (e.g., run standard test suites, build checks, or type checking commands).\n\n### OUTPUT FORMATTING & STYLE\n- Present code blocks with explicit language syntax highlighting tags.\n- Keep technical commentary brief—explain *why* a change was made rather than describing mechanical syntax edits line-by-line.\n- On completing a task, summarize the changes made, the current state of the workspace, and suggest logical next verification steps for the user."
+  },
+  {
+    "role": "user",
+    "content": "Read constant.ts and tell me the exact numeric value of COMPACTION_THRESHOLD_TOKENS and COMPACTION_KEEP_RECENT."
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "reasoning": "Let me search for the constant.ts file and read it to find the exact numeric values of COMPACTION_THRESHOLD_TOKENS and COMPACTION_KEEP_RECENT.",
+    "toolCalls": [
+      {
+        "id": "call-e095c93b-772a-458b-9a04-3fbad9de294f",
+        "type": "function",
+        "function": {
+          "name": "search_code",
+          "arguments": "{\"pattern\":\"constant\\\\.ts\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "toolCallId": "call-e095c93b-772a-458b-9a04-3fbad9de294f",
+    "content": "No matches found."
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "reasoning": "Let me try to find files with \"constant\" in the name.",
+    "toolCalls": [
+      {
+        "id": "call-9fb2238f-511a-491e-9b21-80518d78a769",
+        "type": "function",
+        "function": {
+          "name": "run_bash",
+          "arguments": "{\"command\":\"find . -name \\\"constant.ts\\\" -type f 2>/dev/null\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "toolCallId": "call-9fb2238f-511a-491e-9b21-80518d78a769",
+    "content": ""
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "reasoning": "No constant.ts found. Let me search for files containing \"COMPACTION_THRESHOLD_TOKENS\" or \"COMPACTION_KEEP_RECENT\".",
+    "toolCalls": [
+      {
+        "id": "call-40837b5e-dc39-4c2a-a329-843fca2e4439",
+        "type": "function",
+        "function": {
+          "name": "search_code",
+          "arguments": "{\"pattern\":\"COMPACTION_THRESHOLD_TOKENS\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "toolCallId": "call-40837b5e-dc39-4c2a-a329-843fca2e4439",
+    "content": "No matches found."
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "reasoning": "No matches found. Let me try searching for COMPACTION_KEEP_RECENT.",
+    "toolCalls": [
+      {
+        "id": "call-e8a94b3a-b9d2-4b0b-9407-2ba417b09f79",
+        "type": "function",
+        "function": {
+          "name": "search_code",
+          "arguments": "{\"pattern\":\"COMPACTION_KEEP_RECENT\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "toolCallId": "call-e8a94b3a-b9d2-4b0b-9407-2ba417b09f79",
+    "content": "No matches found."
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "reasoning": "Hmm, no matches. Let me try searching for just \"COMPACTION\" to see if there are any constants defined somewhere.",
+    "toolCalls": [
+      {
+        "id": "call-63affeca-028d-441e-b654-c56239c850da",
+        "type": "function",
+        "function": {
+          "name": "search_code",
+          "arguments": "{\"pattern\":\"COMPACTION\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "toolCallId": "call-63affeca-028d-441e-b654-c56239c850da",
+    "content": "No matches found."
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "reasoning": "Let me look at the overall structure of the project to understand what we're working with.",
+    "toolCalls": [
+      {
+        "id": "call-9b296b5b-885a-44c3-92b6-f299e1faea58",
+        "type": "function",
+        "function": {
+          "name": "run_bash",
+          "arguments": "{\"command\":\"ls -la\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "toolCallId": "call-9b296b5b-885a-44c3-92b6-f299e1faea58",
+    "content": "total 8\ndrwxrwxr-x 2 nehan nehan 4096 Aug 30 13:34 .\ndrwxrwxr-x 5 nehan nehan 4096 Aug 30 13:34 ..\n"
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "reasoning": "The current directory is empty. Let me check if there's a different directory or if we need to look elsewhere.",
+    "toolCalls": [
+      {
+        "id": "call-f6d6eaf9-54c8-45c4-b472-3997faa9780d",
+        "type": "function",
+        "function": {
+          "name": "run_bash",
+          "arguments": "{\"command\":\"find / -name \\\"constant.ts\\\" 2>/dev/null\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "toolCallId": "call-f6d6eaf9-54c8-45c4-b472-3997faa9780d",
+    "content": "ERROR: "
+  }
+]
