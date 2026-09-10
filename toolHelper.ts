@@ -1,10 +1,11 @@
 import fs from 'fs';
 import { execFileSync, execSync } from 'child_process';
 import type { Message } from './session.js';
-import { tools } from './tools.js';
-import { MODEL, SUBAGENT_TOOLS } from './constant.js';
+import { createTools } from './tools.js';
+import { MODEL, SUBAGENT_MAX_ITERATIONS, SUBAGENT_TOOLS, SYSTEM_PROMPT } from './constant.js';
 import { client } from './openrouter.js';
 import { formatRgOutput } from './helpers.js';
+import { stepCountIs } from '@openrouter/agent';
 
 export function runBash(command: string): string {
   try {
@@ -49,47 +50,27 @@ export function editFile(path: string, oldContent: string, newContent: string): 
 
 export async function spawnSubAgent(task: string): Promise<string> {
   const MAX_ITERATIONS = 10;
-  let subMessages: Message[] = [
-    { role: "system", content: "..." },
-    { role: "user", content: task },
-  ];
-  const subToolSchemas = tools.filter(t => SUBAGENT_TOOLS.includes(t.function.name));
-
-  for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const response = await client.chat.send({
-      chatRequest: { model: MODEL, messages: subMessages, tools: subToolSchemas },
+  let iterations = 0;
+  const readOnlyTools = createTools(async () => false)
+    .filter(t => SUBAGENT_TOOLS.includes(t.function.name));
+  let result;
+  try {
+    result = client.callModel({
+      model: MODEL,
+      instructions: SYSTEM_PROMPT,
+      input: task,
+      tools: readOnlyTools,
+      stopWhen: [stepCountIs(SUBAGENT_MAX_ITERATIONS)],
     });
-    const message = (response as any).choices[0].message;
-    const rawToolCalls = message.toolCalls ?? [];
-
-    subMessages.push({
-      role: "assistant",
-      content: message.content,
-      toolCalls: rawToolCalls.length ? rawToolCalls : undefined,
-    });
-    if (!rawToolCalls.length) {
-      return message.content ?? "(sub-agent returned no content)";
-    }
-
-    if (!rawToolCalls.length) {
-      return message.content ?? "(sub-agent returned no content)";
-    }
-
-    for (const call of rawToolCalls) {
-      const args = JSON.parse(call.function.arguments);
-      const executor = toolExecutors[call.function.name];
-      const result = executor
-        ? await executor(args)
-        : `ERROR: No executor found for tool: ${call.function.name}`;
-      subMessages.push({
-        role: "tool",
-        toolCallId: call.id,
-        content: result,
-      });
-    }
+  } catch (err: any) {
+    return `ERROR: sub-agent model call failed — ${err?.error?.message ?? err?.message ?? String(err)}`;
+  }
+  try {
+    return await result.getText();
+  } catch (err: any) {
+    return `ERROR: sub-agent stream failed — ${err?.error?.message ?? err?.message ?? String(err)}`;
   }
 
-  return "(sub-agent hit max iterations without a final answer)";
 }
 
 export function searchCodebase(pattern: string, path: string = '.', maxResults: number = 60): string {

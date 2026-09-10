@@ -5,33 +5,17 @@ import { render, Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
 import Gradient from 'ink-gradient';
+import { randomUUID } from 'crypto';
 import { runAgent, type LogEvent } from './agent-cli.js';
-import { SYSTEM_PROMPT, MODEL, AGENT_NAME } from './constant.js';
-import {
-  loadSession,
-  createNewSessionId,
-  getLatestSessionId,
-  type Message
-} from './session.js';
-import { messagesToEntries, type DisplayEntry } from './converter.js';
 
-function resolveSessionId(): { sessionId: string; isResumed: boolean } {
-  const args = process.argv.slice(2);
-  const resumeIdx = args.indexOf('--resume');
+import { MODEL, AGENT_NAME } from './constant.js';
+import { getLatestStateSessionId } from './session.js';
 
-  if (resumeIdx !== -1) {
-    const specifiedId = args[resumeIdx + 1];
-    const targetId = specifiedId && !specifiedId.startsWith('--')
-      ? specifiedId
-      : getLatestSessionId();
-
-    if (targetId) {
-      return { sessionId: targetId, isResumed: true };
-    }
-  }
-
-  return { sessionId: createNewSessionId(), isResumed: false };
-}
+type DisplayEntry = {
+  id: number;
+  kind: 'user' | 'reasoning' | 'tool_call' | 'tool_result' | 'assistant' | 'info';
+  text: string;
+};
 
 let entryId = 0;
 
@@ -43,9 +27,9 @@ function Header({ sessionId }: { sessionId: string }) {
           <Text bold>▲ {AGENT_NAME}</Text>
         </Gradient>
         <Text dimColor>model: {MODEL} | session: {sessionId.slice(0, 8)}</Text>
+        <Text dimColor>(resume/compaction temporarily disabled during SDK migration)</Text>
       </Box>
     </Box>
-
   );
 }
 
@@ -95,51 +79,45 @@ function EntryLine({ entry }: { entry: DisplayEntry }) {
   }
 }
 
+function resolveSessionId(): string {
+  const args = process.argv.slice(2);
+  const resumeIdx = args.indexOf('--resume');
+
+  if (resumeIdx !== -1) {
+    const specifiedId = args[resumeIdx + 1];
+    const targetId = specifiedId && !specifiedId.startsWith('--')
+      ? specifiedId
+      : getLatestStateSessionId();
+
+    if (targetId) return targetId;
+    // fall through to new session if no prior sessions exist
+  }
+
+  return randomUUID();
+}
+
 function App() {
   const confirmResolverRef = useRef<((val: boolean) => void) | null>(null);
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState<string | null>(null);
-  const sessionRef = useRef(resolveSessionId());
-  const sessionId = sessionRef.current.sessionId;
-
-  const messagesRef = useRef<Message[]>(initMessages());
-  const [entries, setEntries] = useState<DisplayEntry[]>(() => {
-    return messagesToEntries(messagesRef.current);
-  });
-  function initMessages(): Message[] {
-    const loaded = loadSession(sessionId);
-    if (loaded.length === 0) {
-      loaded.push({ role: 'system', content: SYSTEM_PROMPT });
-    }
-    return loaded;
-  }
+  const sessionIdRef = useRef<string>(resolveSessionId());
+  const sessionId = sessionIdRef.current;
+  const [entries, setEntries] = useState<DisplayEntry[]>([]);
 
   function pushEntry(kind: DisplayEntry['kind'], text: string) {
     setEntries(prev => [...prev, { id: entryId++, kind, text }]);
   }
 
-  function appendToLastAssistant(delta: string) {
+  function appendToLast(kind: 'assistant' | 'reasoning', delta: string) {
     setEntries(prev => {
       const last = prev[prev.length - 1];
-      if (last?.kind === 'assistant') {
+      if (last?.kind === kind) {
         const updated = [...prev];
         updated[updated.length - 1] = { ...last, text: last.text + delta };
         return updated;
       }
-      return [...prev, { id: entryId++, kind: 'assistant', text: delta }];
-    });
-  }
-
-  function appendToLastReasoning(delta: string) {
-    setEntries(prev => {
-      const last = prev[prev.length - 1];
-      if (last?.kind === 'reasoning') {
-        const updated = [...prev];
-        updated[updated.length - 1] = { ...last, text: last.text + delta };
-        return updated;
-      }
-      return [...prev, { id: entryId++, kind: 'reasoning', text: delta }];
+      return [...prev, { id: entryId++, kind, text: delta }];
     });
   }
 
@@ -163,7 +141,6 @@ function App() {
 
   async function handleSubmit(value: string) {
     if (!value.trim() || isProcessing) return;
-
     if (value.trim().toLowerCase() === 'exit') {
       process.exit(0);
     }
@@ -172,12 +149,10 @@ function App() {
     setInput('');
     setIsProcessing(true);
 
-    messagesRef.current.push({ role: 'user', content: value });
-
     const onLog = (event: LogEvent) => {
       switch (event.type) {
         case 'reasoning_delta':
-          appendToLastReasoning(event.content);
+          appendToLast('reasoning', event.content);
           break;
         case 'tool_call':
           pushEntry('tool_call', `${event.name}(${JSON.stringify(event.args)})`);
@@ -186,30 +161,33 @@ function App() {
           pushEntry('tool_result', event.content);
           break;
         case 'assistant_delta':
-          appendToLastAssistant(event.content);
+          appendToLast('assistant', event.content);
           break;
         case 'info':
           pushEntry('info', event.content);
           break;
+        case 'sub_agent':
+          pushEntry('info', event.content);
+          break;
       }
     };
-    messagesRef.current = await runAgent(sessionId, messagesRef.current, {
+
+    await runAgent(sessionId, value, {
       onLog,
       onConfirm: handleConfirm,
     });
+
     setIsProcessing(false);
   }
 
   return (
     <Box flexDirection="column" padding={1}>
       <Header sessionId={sessionId} />
-
       <Box flexDirection="column">
         {entries.map(entry => (
           <EntryLine key={entry.id} entry={entry} />
         ))}
       </Box>
-
       {pendingConfirm && (
         <Box marginTop={1} paddingX={1} borderStyle="round" borderColor="red">
           <Text color="redBright" bold>{'⚠ '}</Text>
@@ -217,14 +195,12 @@ function App() {
           <Text dimColor>(y/n)</Text>
         </Box>
       )}
-
       {!pendingConfirm && (
         <Box marginTop={1} paddingX={1} borderStyle="round" borderColor={isProcessing ? 'gray' : 'cyan'}>
           <Text color="cyanBright" bold>{'❯ '}</Text>
           <TextInput value={input} onChange={setInput} onSubmit={handleSubmit} focus={!isProcessing} />
         </Box>
       )}
-
       {isProcessing && (
         <Box marginTop={1}>
           <Text color="cyan">
@@ -233,7 +209,6 @@ function App() {
           <Text dimColor> thinking...</Text>
         </Box>
       )}
-
       <Box marginTop={1}>
         <Text dimColor>type "exit" to quit</Text>
       </Box>

@@ -1,11 +1,10 @@
 #!/usr/bin/env node
-
-import { tools } from './tools.js';
-import { toolExecutors } from './toolHelper.js';
-import { saveSession, type Message } from './session.js';
+import fs from 'fs';
+import path from 'path';
+import { stepCountIs, type StateAccessor, type ConversationState } from '@openrouter/agent';
+import { createTools } from './tools.js';
 import { client } from './openrouter.js';
-import { FALLBACK_MODELS, MAX_ITERATIONS, MODEL, RISKY_TOOLS } from './constant.js';
-import { compactHistoryIfNeeded } from './compaction.js';
+import { MAX_ITERATIONS, MODEL } from './constant.js';
 
 export type LogEvent =
   | { type: 'reasoning_delta'; content: string }
@@ -20,164 +19,87 @@ export type Callbacks = {
   onConfirm: (description: string) => Promise<boolean>;
 };
 
-export async function runAgent(sessionId: string, messages: Message[], callbacks: Callbacks): Promise<Message[]> {
-  let iterations = 0;
+const SESSIONS_DIR = path.join(process.cwd(), '.agent-sessions');
 
-  while (iterations < MAX_ITERATIONS) {
-    iterations++;
+function ensureDir() {
+  if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+}
 
-    messages = await compactHistoryIfNeeded(messages);
-    saveSession(sessionId, messages);
-
-    let stream;
-    try {
-      stream = await client.chat.send({
-        chatRequest: { model: MODEL, models: FALLBACK_MODELS, messages, tools, stream: true },
-      });
-    } catch (err: any) {
-      const errMsg = err?.error?.message ?? err?.message ?? String(err);
-      callbacks.onLog({ type: 'info', content: `Model call failed: ${errMsg}` });
-      messages.push({
-        role: 'assistant',
-        content: `[Agent stopped: model call failed — ${errMsg}]`,
-      });
-      saveSession(sessionId, messages);
-      return messages; // don't crash — bail out of this turn gracefully
-    }
-
-    let content = '';
-    let reasoning = '';
-    const toolCallsAccumulator: Record<number, { id?: string; name?: string; arguments: string }> = {};
-
-    try {
-      for await (const chunk of stream as any) {
-        const delta = (chunk as any).choices?.[0]?.delta;
-        if (!delta) continue;
-
-        if (delta.content) {
-          content += delta.content;
-          callbacks.onLog({ type: 'assistant_delta', content: delta.content });
-        }
-
-        if (delta.reasoning) {
-          reasoning += delta.reasoning;
-          callbacks.onLog({ type: 'reasoning_delta', content: delta.reasoning });
-        }
-
-        if (delta.toolCalls) {
-          for (const tc of delta.toolCalls) {
-            const idx = tc.index ?? 0;
-            if (!toolCallsAccumulator[idx]) toolCallsAccumulator[idx] = { arguments: '' };
-            if (tc.id) toolCallsAccumulator[idx].id = tc.id;
-            if (tc.function?.name) toolCallsAccumulator[idx].name = tc.function.name;
-            if (tc.function?.arguments) toolCallsAccumulator[idx].arguments += tc.function.arguments;
-          }
-        }
+// Backs the SDK's own conversation state directly with your existing file
+// storage — this REPLACES loadSession/saveSession's role for agent turns.
+// It stores ConversationState (Item format), not your old Message[] shape.
+function createFileStateAccessor(sessionId: string): StateAccessor {
+  ensureDir();
+  const statePath = path.join(SESSIONS_DIR, `${sessionId}.state.json`);
+  return {
+    load: async () => {
+      if (!fs.existsSync(statePath)) return null;
+      try {
+        return JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      } catch {
+        return null;
       }
-    } catch (err: any) {
-      // Stream itself can also fail mid-read (dropped connection, malformed chunk, etc.)
-      const errMsg = err?.error?.message ?? err?.message ?? String(err);
-      callbacks.onLog({ type: 'info', content: `Stream failed mid-response: ${errMsg}` });
-      messages.push({
-        role: 'assistant',
-        content: content || `[Agent stopped: stream failed — ${errMsg}]`,
-      });
-      saveSession(sessionId, messages);
-      return messages;
-    }
+    },
+    save: async (state: ConversationState) => {
+      fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+    },
+  };
+}
 
-    const toolCallEntries = Object.values(toolCallsAccumulator);
-    const toolCalls =
-      toolCallEntries.length > 0
-        ? toolCallEntries.map((tc, i) => ({
-          id: tc.id ?? `call_${i}`,
-          type: 'function' as const,
-          function: { name: tc.name!, arguments: tc.arguments },
-        }))
-        : undefined;
+export async function runAgent(
+  sessionId: string,
+  userMessage: string,
+  callbacks: Callbacks
+): Promise<void> {
+  const tools = createTools(callbacks.onConfirm);
+  const state = createFileStateAccessor(sessionId);
 
-    const message: Message = {
-      role: 'assistant',
-      content: content || null,
-      reasoning: reasoning || undefined,
-      toolCalls,
-    };
-
-    if (!message.toolCalls || message.toolCalls.length === 0) {
-      messages.push(message);
-      saveSession(sessionId, messages);
-      return messages;
-    }
-
-    messages.push(message);
-
-    const riskyChecks: Array<typeof message.toolCalls[number]> = [];
-    const safeCalls: Array<typeof message.toolCalls[number]> = [];
-
-    for (const call of message.toolCalls) {
-      if (RISKY_TOOLS.has(call.function.name)) {
-        riskyChecks.push(call);
-      } else {
-        safeCalls.push(call);
-      }
-    }
-
-    const safeToolsResult = await Promise.all(
-      safeCalls.map(async (call) => {
-        const args = JSON.parse(call.function.arguments);
-        callbacks.onLog({ type: 'tool_call', name: call.function.name, args });
-
-        const executor = toolExecutors[call.function.name];
-        if (!executor) {
-          return { callId: call.id, content: `ERROR: No executor found for tool: ${call.function.name}` };
-        }
-
-        const output = await executor(args);
-
-        if (call.function.name === 'spawn_sub_agent') {
-          callbacks.onLog({ type: 'sub_agent', content: 'Sub Agent Completed the Task.' });
-        } else {
-          callbacks.onLog({ type: 'tool_result', content: output });
-        }
-
-        return { callId: call.id, content: output };
-      })
-    );
-
-    for (const call of riskyChecks) {
-      const args = JSON.parse(call.function.arguments);
-      callbacks.onLog({ type: 'tool_call', name: call.function.name, args });
-
-      const executor = toolExecutors[call.function.name];
-      if (!executor) {
-        messages.push({
-          role: 'tool',
-          toolCallId: call.id,
-          content: `ERROR: No executor found for tool: ${call.function.name}`,
-        });
-        continue;
-      }
-
-      const allowed = await callbacks.onConfirm(`${call.function.name}(${JSON.stringify(args)})`);
-      if (!allowed) {
-        callbacks.onLog({ type: 'info', content: `Denied: ${call.function.name}` });
-        messages.push({ role: 'tool', toolCallId: call.id, content: 'User denied this action.' });
-        continue;
-      }
-
-      const output = await executor(args);
-      callbacks.onLog({ type: 'tool_result', content: output });
-      messages.push({ role: 'tool', toolCallId: call.id, content: output });
-    }
-
-    for (const { callId, content } of safeToolsResult) {
-      messages.push({ role: 'tool', toolCallId: callId, content });
-    }
-
-    saveSession(sessionId, messages);
+  let result;
+  try {
+    result = client.callModel({
+      model: MODEL,
+      input: userMessage, // ONLY the new message — state carries prior history
+      tools,
+      stopWhen: [stepCountIs(MAX_ITERATIONS)],
+      state, // SDK loads prior state, appends this turn, saves after
+    });
+  } catch (err: any) {
+    const errMsg = err?.error?.message ?? err?.message ?? String(err);
+    callbacks.onLog({ type: 'info', content: `Model call failed: ${errMsg}` });
+    return;
   }
 
-  callbacks.onLog({ type: 'info', content: 'Max iterations reached without a final answer.' });
-  saveSession(sessionId, messages);
-  return messages;
+  const reasoningTask = (async () => {
+    try {
+      for await (const delta of result.getReasoningStream()) {
+        callbacks.onLog({ type: 'reasoning_delta', content: delta });
+      }
+    } catch {
+      // best-effort
+    }
+  })();
+
+  const toolCallTask = (async () => {
+    try {
+      for await (const call of result.getToolCallsStream()) {
+        callbacks.onLog({ type: 'tool_call', name: call.name, args: call.arguments });
+      }
+    } catch (err: any) {
+      const errMsg = err?.error?.message ?? err?.message ?? String(err);
+      callbacks.onLog({ type: 'info', content: `Tool call stream failed: ${errMsg}` });
+    }
+  })();
+
+  try {
+    for await (const delta of result.getTextStream()) {
+      callbacks.onLog({ type: 'assistant_delta', content: delta });
+    }
+  } catch (err: any) {
+    const errMsg = err?.error?.message ?? err?.message ?? String(err);
+    callbacks.onLog({ type: 'info', content: `Stream failed mid-response: ${errMsg}` });
+  }
+
+  await reasoningTask;
+  await toolCallTask;
+
 }

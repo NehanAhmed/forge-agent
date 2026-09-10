@@ -1,0 +1,96 @@
+import { resolveAuth } from '../auth/auth-resolver.js';
+import { isFiniteEpoch } from './cache-types.js';
+const _expiresInStillRelative = true;
+void _expiresInStillRelative;
+/** Pull a serializable token set from an OAuth provider, if it has tokens. */
+async function tokensFromProvider(provider) {
+    const tokens = await provider.tokens();
+    if (tokens === undefined) {
+        return undefined;
+    }
+    const expiresInMs = typeof tokens.expires_in === 'number' ? tokens.expires_in * 1000 : undefined;
+    return {
+        accessToken: tokens.access_token,
+        ...(typeof tokens.token_type === 'string' && {
+            tokenType: tokens.token_type,
+        }),
+        ...(typeof tokens.refresh_token === 'string' && {
+            refreshToken: tokens.refresh_token,
+        }),
+        ...(typeof tokens.scope === 'string' && {
+            scope: tokens.scope,
+        }),
+        ...(expiresInMs !== undefined && {
+            expiresAt: Date.now() + expiresInMs,
+        }),
+    };
+}
+async function buildAuthBlock(auth) {
+    if (auth === undefined) {
+        return undefined;
+    }
+    if (auth.kind === 'oauth') {
+        const tokens = await tokensFromProvider(auth.provider);
+        return tokens !== undefined
+            ? {
+                tokens,
+            }
+            : undefined;
+    }
+    const { headers } = resolveAuth(auth);
+    return Object.keys(headers).length > 0
+        ? {
+            headers,
+        }
+        : undefined;
+}
+/**
+ * Build a serializable snapshot. Credentials (tokens/headers) are included only
+ * when `cacheCredentials` is true; otherwise the snapshot holds just the
+ * structural data needed to rebuild the tool set after a fresh auth. Session ids
+ * are never included — see the note in the `cacheCredentials` branch.
+ */
+export async function serializeServer(input) {
+    const tools = input.toolDefs.map((def) => ({
+        name: def.name,
+        ...(def.description !== undefined && {
+            description: def.description,
+        }),
+        inputSchema: def.inputSchema,
+        ...(def.outputSchema !== undefined && {
+            outputSchema: def.outputSchema,
+        }),
+        ...(def.loopKey !== undefined && {
+            loopKey: def.loopKey,
+        }),
+    }));
+    const snapshot = {
+        version: 1,
+        url: input.url,
+        transport: input.transport,
+        ...(input.serverInfo !== undefined && {
+            serverInfo: input.serverInfo,
+        }),
+        ...(input.capabilities !== undefined && {
+            capabilities: input.capabilities,
+        }),
+        tools,
+        cachedAt: isFiniteEpoch(input.cachedAt) ? input.cachedAt : Date.now(),
+    };
+    if (input.cacheCredentials) {
+        const auth = await buildAuthBlock(input.auth);
+        if (auth !== undefined) {
+            snapshot.auth = auth;
+        }
+        // `sessionId` is deliberately NOT persisted. A Streamable HTTP
+        // `Mcp-Session-Id` is a bearer-equivalent handle to an authenticated server
+        // session, and nothing reads it back: the replay path stopped forwarding it
+        // once we found that a transport reporting a sessionId makes SDK v2 skip
+        // negotiation entirely, silently losing server capabilities. Writing it to an
+        // external store (Redis, a database, a file) would be attack surface for no
+        // functionality. That it was gated behind `cacheCredentials` at all reflects
+        // that it was always credential-grade.
+    }
+    return snapshot;
+}
+//# sourceMappingURL=serialize.js.map

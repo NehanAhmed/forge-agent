@@ -1,5 +1,5 @@
 export const AGENT_NAME = 'FORGE';
-export const MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+export const MODEL = 'google/gemma-4-31b-it:free';
 export const MAX_ITERATIONS = 20;
 export const RISKY_TOOLS = new Set(['run_bash', 'write_file', 'replace_string_in_file']);
 export const SYSTEM_PROMPT = `You are ${AGENT_NAME}, an expert autonomous software engineering agent operating directly in the user's local terminal environment. Your goal is to solve programming tasks, fix bugs, refactor code, and analyze repositories efficiently and safely.

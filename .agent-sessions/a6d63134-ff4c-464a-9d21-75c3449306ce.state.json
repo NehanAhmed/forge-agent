@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "id": "conv_c5c77fb4-9a20-49b2-ba31-198fcb9a7d48",
+  "messages": [
+    {
+      "role": "user",
+      "content": "hello"
+    },
+    {
+      "content": [
+        {
+          "text": "The user said \"hello\". This is a simple greeting - I should respond politely and ask how I can help.",
+          "type": "reasoning_text"
+        }
+      ],
+      "id": "rs_tmp_cfqsc83gsy",
+      "status": "completed",
+      "summary": [],
+      "type": "reasoning",
+      "format": "unknown"
+    },
+    {
+      "content": [
+        {
+          "annotations": [],
+          "logprobs": [],
+          "text": "Hello! How can I help you today?",
+          "type": "output_text"
+        }
+      ],
+      "id": "msg_tmp_39z47k5yo0p",
+      "role": "assistant",
+      "status": "completed",
+      "type": "message"
+    }
+  ],
+  "status": "complete",
+  "createdAt": 1789022357454,
+  "updatedAt": 1789022441575,
+  "previousResponseId": "gen-1789022406-uHvifeVhX3oeMujvQDQj"
+}

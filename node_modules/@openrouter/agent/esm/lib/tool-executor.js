@@ -1,0 +1,756 @@
+import * as z4 from 'zod/v4';
+import { isContentArray } from './conversation-state.js';
+import { isFunctionCallItem, isFunctionCallOutputItem } from './stream-type-guards.js';
+import { buildToolExecuteContext, buildToolRunContext } from './tool-context.js';
+import { hasExecuteFunction, isDeferredHandle, isGeneratorTool, isHITLTool, isMcpTool, isRegularExecuteTool, isServerTool, isUnifiedTool, } from './tool-types.js';
+// Re-export ZodError for convenience
+export const ZodError = z4.ZodError;
+/**
+ * Typeguard to check if a value is a non-null object (not an array).
+ */
+function isNonNullObject(value) {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+export function sanitizeJsonSchema(obj) {
+    if (obj === null || typeof obj !== 'object') {
+        return obj;
+    }
+    if (Array.isArray(obj)) {
+        return obj.map(sanitizeJsonSchema);
+    }
+    // At this point, obj is a non-null, non-array object
+    // Use typeguard to narrow the type for type-safe property access
+    if (!isNonNullObject(obj)) {
+        return obj;
+    }
+    const result = {};
+    for (const key of Object.keys(obj)) {
+        if (!key.startsWith('~')) {
+            result[key] = sanitizeJsonSchema(obj[key]);
+        }
+    }
+    return result;
+}
+/**
+ * Typeguard to check if a value is a valid Zod schema compatible with zod/v4.
+ * Zod schemas have a _zod property that contains schema metadata.
+ */
+function isZodSchema(value) {
+    if (typeof value !== 'object' || value === null) {
+        return false;
+    }
+    if (!('_zod' in value)) {
+        return false;
+    }
+    // After the 'in' check, TypeScript knows value has _zod property
+    return typeof value._zod === 'object';
+}
+/**
+ * Convert a Zod schema to JSON Schema using Zod v4's toJSONSchema function.
+ * Accepts ZodType from the main zod package for user compatibility.
+ * The resulting schema is sanitized to remove metadata properties (like ~standard)
+ * that would cause 400 errors with downstream providers.
+ */
+export function convertZodToJsonSchema(zodSchema) {
+    if (!isZodSchema(zodSchema)) {
+        throw new Error('Invalid Zod schema provided');
+    }
+    // Use draft-7 as it's closest to OpenAPI 3.0's JSON Schema variant
+    const jsonSchema = z4.toJSONSchema(zodSchema, {
+        target: 'draft-7',
+    });
+    // jsonSchema is always a Record<string, unknown> from toJSONSchema
+    // The overloaded sanitizeJsonSchema preserves this type
+    return sanitizeJsonSchema(jsonSchema);
+}
+/**
+ * Convert tools to OpenRouter API format. Server tools pass their SDK-shaped
+ * config through untouched; client tools are packaged into the function-call
+ * shape — their wire definitions are NEVER augmented per tool (interacting
+ * with long-running tasks goes through the single universal `task` tool,
+ * appended by callModel when warranted, so the per-tool context cost stays
+ * constant no matter how many async tools are registered). Return type
+ * widens to the SDK's full request-tool union so any new server-tool
+ * variant added upstream flows through automatically.
+ */
+export function convertToolsToAPIFormat(tools) {
+    return tools.map((tool) => {
+        if (isServerTool(tool)) {
+            return tool.config;
+        }
+        const apiTool = {
+            type: 'function',
+            name: tool.function.name,
+            description: tool.function.description || null,
+            strict: tool.function.strict ?? null,
+            parameters: convertZodToJsonSchema(tool.function.inputSchema),
+        };
+        return apiTool;
+    });
+}
+/**
+ * Validate tool input against Zod schema
+ * @throws ZodError if validation fails
+ */
+export function validateToolInput(schema, args) {
+    return z4.parse(schema, args);
+}
+/**
+ * Validate tool output against Zod schema
+ * @throws ZodError if validation fails
+ */
+export function validateToolOutput(schema, result) {
+    return z4.parse(schema, result);
+}
+/**
+ * Try to validate a value against a Zod schema without throwing
+ * @returns true if validation succeeds, false otherwise
+ */
+function tryValidate(schema, value) {
+    const result = z4.safeParse(schema, value);
+    return result.success;
+}
+/**
+ * Parse tool call arguments from JSON string.
+ * Treats empty/whitespace-only strings as an empty object — some providers
+ * return `arguments: ""` for tools that take no parameters.
+ */
+export function parseToolCallArguments(argumentsString) {
+    const trimmed = argumentsString.trim();
+    if (!trimmed) {
+        return {};
+    }
+    try {
+        return JSON.parse(trimmed);
+    }
+    catch (error) {
+        throw new Error(`Failed to parse tool call arguments: ${error instanceof Error ? error.message : String(error)}`);
+    }
+}
+/**
+ * Build a ToolExecuteContext for a tool from a TurnContext and optional context store.
+ *
+ * `context.toolCall` is part of the tool-facing contract
+ * ({@link TurnContext.toolCall}), but only the non-streaming orchestrator
+ * historically populated it — the streaming `ModelResult` loop builds its
+ * turn context with just `numberOfTurns`, so hooks like `onToolCalled` saw
+ * `toolCall: undefined`. Every executor path has the call in hand, so thread
+ * it here: a caller-provided `toolCall` on the turn context wins (the
+ * orchestrator's carries `status`), and the executed call fills the gap
+ * otherwise.
+ */
+// biome-ignore lint: parameters match the internal API shape
+function buildExecuteCtx(tool, toolCall, turnContext, contextStore, sharedSchema, extras) {
+    const resolvedToolCall = turnContext.toolCall ?? (toolCall && toFunctionCallItem(toolCall));
+    return buildToolExecuteContext(resolvedToolCall
+        ? {
+            ...turnContext,
+            toolCall: resolvedToolCall,
+        }
+        : turnContext, contextStore, tool.function.name, tool.function.contextSchema, sharedSchema, extras);
+}
+/**
+ * Convert an executor-shaped {@link ParsedToolCall} (whose `id` is the wire
+ * `call_id` and whose `arguments` are already parsed) back into the
+ * wire-shaped {@link models.FunctionCallItem} the execute context declares.
+ *
+ * `arguments` is always re-serialized: every executor entry point parses the
+ * wire string first (see `extractToolCallsFromResponse` / the orchestrator),
+ * so a string value here is a *parsed* input for a string-schema tool, not
+ * raw JSON — passing it through unquoted would put invalid JSON on the item.
+ * The re-serialized string is therefore semantically equal to the wire
+ * arguments but not guaranteed byte-identical (key order, whitespace).
+ */
+function toFunctionCallItem(toolCall) {
+    return {
+        type: 'function_call',
+        id: toolCall.id,
+        callId: toolCall.id,
+        name: toolCall.name,
+        // JSON.stringify(undefined) is undefined, not a string — fall back to '{}'.
+        arguments: JSON.stringify(toolCall.arguments) ?? '{}',
+    };
+}
+/**
+ * Execute a regular (non-generator) tool
+ */
+// biome-ignore lint: parameters match the internal API shape
+export async function executeRegularTool(tool, toolCall, context, contextStore, sharedSchema, extras) {
+    if (!isRegularExecuteTool(tool)) {
+        throw new Error(`Tool "${toolCall.name}" is not a regular execute tool or has no execute function`);
+    }
+    const source = isMcpTool(tool) ? 'mcp' : 'client';
+    try {
+        const validatedInput = validateToolInput(tool.function.inputSchema, toolCall.arguments);
+        const executeContext = buildExecuteCtx(tool, toolCall, context, contextStore, sharedSchema, extras);
+        // Execute tool with context
+        const result = await Promise.resolve(tool.function.execute(validatedInput, executeContext));
+        // Validate output if schema is provided
+        if (tool.function.outputSchema) {
+            const validatedOutput = validateToolOutput(tool.function.outputSchema, result);
+            return {
+                toolCallId: toolCall.id,
+                toolName: toolCall.name,
+                source,
+                result: validatedOutput,
+            };
+        }
+        return {
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            source,
+            result,
+        };
+    }
+    catch (error) {
+        return {
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            source,
+            result: null,
+            error: error instanceof Error ? error : new Error(String(error)),
+        };
+    }
+}
+/**
+ * Execute a generator tool and collect preliminary and final results
+ * - Intermediate yields are validated against eventSchema (preliminary events)
+ * - Last yield is validated against outputSchema (final result sent to model)
+ * - Generator must emit at least one value
+ */
+// biome-ignore lint: parameters match the internal API shape
+export async function executeGeneratorTool(tool, toolCall, context, onPreliminaryResult, contextStore, sharedSchema, extras) {
+    if (!isGeneratorTool(tool)) {
+        throw new Error(`Tool "${toolCall.name}" is not a generator tool`);
+    }
+    const source = isMcpTool(tool) ? 'mcp' : 'client';
+    try {
+        const validatedInput = validateToolInput(tool.function.inputSchema, toolCall.arguments);
+        const executeContext = buildExecuteCtx(tool, toolCall, context, contextStore, sharedSchema, extras);
+        const preliminaryResults = [];
+        let finalResult;
+        let hasFinalResult = false;
+        let lastEmittedValue;
+        let hasEmittedValue = false;
+        const iterator = tool.function.execute(validatedInput, executeContext);
+        let iterResult = await iterator.next();
+        while (!iterResult.done) {
+            const event = iterResult.value;
+            lastEmittedValue = event;
+            hasEmittedValue = true;
+            const matchesOutputSchema = tryValidate(tool.function.outputSchema, event);
+            const matchesEventSchema = tryValidate(tool.function.eventSchema, event);
+            if (matchesOutputSchema && !matchesEventSchema && !hasFinalResult) {
+                finalResult = validateToolOutput(tool.function.outputSchema, event);
+                hasFinalResult = true;
+            }
+            else {
+                const validatedPreliminary = validateToolOutput(tool.function.eventSchema, event);
+                preliminaryResults.push(validatedPreliminary);
+                if (onPreliminaryResult) {
+                    onPreliminaryResult(toolCall.id, validatedPreliminary);
+                }
+            }
+            iterResult = await iterator.next();
+        }
+        if (iterResult.value !== undefined) {
+            finalResult = validateToolOutput(tool.function.outputSchema, iterResult.value);
+            hasFinalResult = true;
+        }
+        if (!hasFinalResult) {
+            if (!hasEmittedValue) {
+                throw new Error(`Generator tool "${toolCall.name}" completed without emitting any values or returning a result`);
+            }
+            finalResult = validateToolOutput(tool.function.outputSchema, lastEmittedValue);
+        }
+        return {
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            source,
+            result: finalResult,
+            preliminaryResults,
+        };
+    }
+    catch (error) {
+        return {
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            source,
+            result: null,
+            error: error instanceof Error ? error : new Error(String(error)),
+        };
+    }
+}
+/**
+ * Execute a HITL tool's `onToolCalled` hook.
+ *
+ * Returns:
+ * - `ToolExecutionResult` if the hook produced a value (short-circuit, send to model)
+ * - `null` if the hook returned `null` (pause — treat as manual tool)
+ * - `ToolExecutionResult` with `error` set if the hook threw
+ */
+// biome-ignore lint: parameters match the internal API shape
+export async function executeHITLTool(tool, toolCall, context, contextStore, sharedSchema, extras) {
+    if (!isHITLTool(tool)) {
+        throw new Error(`Tool "${toolCall.name}" is not a HITL tool`);
+    }
+    const source = isMcpTool(tool) ? 'mcp' : 'client';
+    try {
+        const validatedInput = validateToolInput(tool.function.inputSchema, toolCall.arguments);
+        const executeContext = buildExecuteCtx(tool, toolCall, context, contextStore, sharedSchema, extras);
+        const result = await Promise.resolve(tool.function.onToolCalled(validatedInput, executeContext));
+        if (result === null) {
+            // Pause — treat as manual tool
+            return null;
+        }
+        // outputSchema is required on HITL tools — validate unconditionally.
+        const validatedOutput = validateToolOutput(tool.function.outputSchema, result);
+        return {
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            source,
+            result: validatedOutput,
+        };
+    }
+    catch (error) {
+        return {
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            source,
+            result: null,
+            error: error instanceof Error ? error : new Error(String(error)),
+        };
+    }
+}
+/** Type guard for {@link AsyncToolInvocation} in executeTool results. */
+export function isAsyncToolInvocation(value) {
+    return (typeof value === 'object' &&
+        value !== null &&
+        'asyncMode' in value &&
+        (value.asyncMode === 'background' ||
+            value.asyncMode === 'defer'));
+}
+/** Resolve a tool's `ack` declaration against the validated input. */
+function resolveAck(ack, input) {
+    if (ack === undefined) {
+        return undefined;
+    }
+    if (typeof ack === 'function') {
+        return ack(input);
+    }
+    return ack;
+}
+/**
+ * Drive a unified tool's `run` to completion: detects generator vs promise,
+ * routes yields through eventSchema validation → task log → preliminary
+ * results, validates the final value against `outputSchema` (unless it is a
+ * DeferredHandle), and enforces that only deferred tools may defer.
+ */
+async function runUnifiedTool(args) {
+    const { fn, validatedInput, runContext, toolName, onYield } = args;
+    const returned = fn.run(validatedInput, runContext);
+    let result;
+    if (returned !== null &&
+        typeof returned === 'object' &&
+        Symbol.asyncIterator in returned) {
+        // Generator run: yields are logs/events; RETURN is the result. Strict
+        // rule — unlike legacy `execute` generators, a final yield is NOT the
+        // result.
+        const iterator = returned[Symbol.asyncIterator]();
+        let step = await iterator.next();
+        while (!step.done) {
+            const event = fn.eventSchema ? validateToolOutput(fn.eventSchema, step.value) : step.value;
+            onYield(event);
+            step = await iterator.next();
+        }
+        result = step.value;
+    }
+    else {
+        result = await Promise.resolve(returned);
+    }
+    if (isDeferredHandle(result)) {
+        if (fn.lifecycle !== 'deferred') {
+            throw new Error(`Tool "${toolName}": run() returned a DeferredHandle but lifecycle is '${fn.lifecycle}'. Only lifecycle: 'deferred' tools may defer.`);
+        }
+        return result;
+    }
+    return fn.outputSchema ? validateToolOutput(fn.outputSchema, result) : result;
+}
+/**
+ * Prepare a unified tool invocation. Validates input eagerly; builds the
+ * ToolRunContext (defer/log/onMessage/client wired by the engine through
+ * `extras.runExtras`); then per lifecycle:
+ *
+ * - `'sync'`: runs to completion inline — a plain `ToolExecutionResult`,
+ *   zero async overhead, behaviorally identical to `execute`.
+ * - `'background'` (and agent tools): returns a `'background'`
+ *   {@link AsyncToolInvocation} thunk for the engine's grace-window race.
+ * - `'deferred'`: awaits the run — a plain value is the typed fast path; a
+ *   `DeferredHandle` becomes a `'defer'` invocation.
+ */
+// biome-ignore lint: parameters match the internal API shape
+export async function prepareUnifiedInvocation(tool, toolCall, context, onPreliminaryResult, contextStore, sharedSchema, extras) {
+    if (!isUnifiedTool(tool)) {
+        throw new Error(`Tool "${toolCall.name}" is not a unified run() tool`);
+    }
+    const fn = tool.function;
+    const source = isMcpTool(tool) ? 'mcp' : 'client';
+    let validatedInput;
+    try {
+        validatedInput = validateToolInput(fn.inputSchema, toolCall.arguments);
+    }
+    catch (error) {
+        return {
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            source,
+            result: null,
+            error: error instanceof Error ? error : new Error(String(error)),
+        };
+    }
+    // Yield pipeline: eventSchema validation happened in runUnifiedTool; here
+    // the engine-provided log sink (registry) and preliminary broadcast fire.
+    const onYield = (event) => {
+        extras?.runExtras?.log?.(event);
+        onPreliminaryResult?.(toolCall.id, event);
+    };
+    // The run context routes ctx.log through the same pipeline as a yield —
+    // with eventSchema validation applied to STRUCTURED entries only
+    // (runUnifiedTool only validates generator yields). Bare strings are
+    // human-readable progress notes: the task log models them explicitly
+    // (TaskLogEntry.kind 'text'), so a tool that declares a structured
+    // eventSchema can still log a plain sentence.
+    //
+    // Object.create (not spread): the engine's runExtras exposes `taskId` as
+    // a LIVE getter backed by the run binding — a spread would snapshot its
+    // current value (undefined; the ToolTask doesn't exist yet).
+    const runExtras = Object.assign(Object.create(extras?.runExtras ?? null), {
+        log: (entry) => {
+            const validated = fn.eventSchema && typeof entry !== 'string'
+                ? validateToolOutput(fn.eventSchema, entry)
+                : entry;
+            onYield(validated);
+        },
+    });
+    const runContext = buildToolRunContext(context, contextStore, tool.function.name, tool.function.contextSchema, sharedSchema, {
+        ...extras,
+        runExtras,
+    });
+    const invokeRun = () => runUnifiedTool({
+        fn,
+        validatedInput,
+        runContext,
+        toolName: String(toolCall.name),
+        onYield,
+    });
+    if (fn.lifecycle === 'background') {
+        return {
+            asyncMode: 'background',
+            run: async () => {
+                const result = await invokeRun();
+                if (isDeferredHandle(result)) {
+                    // Unreachable (runUnifiedTool throws for non-deferred), but keep
+                    // the invariant explicit for the engine's benefit.
+                    throw new Error(`Tool "${toolCall.name}": background run cannot defer`);
+                }
+                return result;
+            },
+            ...(fn.ack !== undefined && {
+                ack: resolveAck(fn.ack, validatedInput),
+            }),
+            graceMs: fn.graceMs ?? 250,
+        };
+    }
+    // sync + deferred both await the run in-round.
+    try {
+        const result = await invokeRun();
+        if (isDeferredHandle(result)) {
+            if (result.taskId.length === 0 || result.taskId.length > 256) {
+                throw new Error(`Tool "${toolCall.name}": ctx.defer() taskId must be 1-256 characters`);
+            }
+            return {
+                asyncMode: 'defer',
+                taskId: result.taskId,
+                ...(result.ack !== undefined
+                    ? {
+                        ack: result.ack,
+                    }
+                    : fn.ack !== undefined && {
+                        ack: resolveAck(fn.ack, validatedInput),
+                    }),
+                ...((result.pollAfterMs ?? fn.pollAfterMs) !== undefined && {
+                    pollAfterMs: result.pollAfterMs ?? fn.pollAfterMs,
+                }),
+                ...(result.expiresAt !== undefined && {
+                    expiresAt: result.expiresAt,
+                }),
+            };
+        }
+        return {
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            source,
+            result,
+        };
+    }
+    catch (error) {
+        return {
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            source,
+            result: null,
+            error: error instanceof Error ? error : new Error(String(error)),
+        };
+    }
+}
+/**
+ * Execute a tool call.
+ * Automatically detects if it's a regular, generator, HITL, or unified
+ * `run` tool.
+ *
+ * Returns `null` only for HITL tools whose `onToolCalled` returned `null`
+ * (signaling a manual-style pause). Unified background/deferred tools may
+ * return an {@link AsyncToolInvocation}. All other tools always return a
+ * `ToolExecutionResult` (with `error` set on failure).
+ */
+// biome-ignore lint: parameters match the internal API shape
+export async function executeTool(tool, toolCall, context, onPreliminaryResult, contextStore, sharedSchema, extras) {
+    if (isHITLTool(tool)) {
+        return executeHITLTool(tool, toolCall, context, contextStore, sharedSchema, extras);
+    }
+    if (isUnifiedTool(tool)) {
+        return prepareUnifiedInvocation(tool, toolCall, context, onPreliminaryResult, contextStore, sharedSchema, extras);
+    }
+    if (!hasExecuteFunction(tool)) {
+        throw new Error(`Tool "${toolCall.name}" has no execute function. Use manual tool execution.`);
+    }
+    if (isGeneratorTool(tool)) {
+        return executeGeneratorTool(tool, toolCall, context, onPreliminaryResult, contextStore, sharedSchema, extras);
+    }
+    return executeRegularTool(tool, toolCall, context, contextStore, sharedSchema, extras);
+}
+/**
+ * Find a client tool by name in the tools array. Server tools have no
+ * client-side name to match against and are skipped.
+ */
+export function findToolByName(tools, name) {
+    return tools.find((tool) => !isServerTool(tool) && tool.function.name === name);
+}
+/**
+ * Format tool execution result as a string for sending to the model
+ */
+export function formatToolResultForModel(result) {
+    if (result.error) {
+        return JSON.stringify({
+            error: result.error.message,
+            toolName: result.toolName,
+        });
+    }
+    return JSON.stringify(result.result);
+}
+/**
+ * Create a user-friendly error message for tool execution errors
+ */
+export function formatToolExecutionError(error, toolCall) {
+    if (error instanceof ZodError) {
+        const issues = error.issues.map((issue) => ({
+            path: issue.path.join('.'),
+            message: issue.message,
+        }));
+        return `Tool "${toolCall.name}" validation error:\n${JSON.stringify(issues, null, 2)}`;
+    }
+    return `Tool "${toolCall.name}" execution error: ${error.message}`;
+}
+/**
+ * Typeguard: input is a plain array of items. Narrows the InputsUnion's
+ * "string | Array<...>" shape so we can walk the array.
+ */
+function isItemArray(input) {
+    return Array.isArray(input);
+}
+/**
+ * Serialize a value for `FunctionCallOutputItem.output`, preserving the
+ * content-array shape (input_text/input_image/input_file blocks) verbatim so
+ * multimodal outputs are not corrupted by JSON.stringify. All other values
+ * are stringified. Matches the detection used elsewhere in the SDK
+ * (`unsentResultsToAPIFormat`).
+ */
+function toFunctionCallOutputValue(value) {
+    if (isContentArray(value)) {
+        return value;
+    }
+    return JSON.stringify(value);
+}
+/**
+ * Format a validation/hook-error payload alongside the caller's original output.
+ * The wrapper itself is a synthetic object and is always JSON. The
+ * `originalOutput` slot preserves a content-array shape verbatim if the
+ * caller supplied one, so the model can still see the rich payload that
+ * triggered the error.
+ */
+function formatHookError(message, originalOutput) {
+    if (isContentArray(originalOutput)) {
+        // When the caller supplied a content array, we cannot cram both the
+        // error wrapper and the content blocks into a single content array —
+        // the `FunctionCallOutputItemOutputUnion1` members are visible-to-model
+        // blocks, not arbitrary JSON. Emit a text block carrying the error plus
+        // the original content blocks so the model sees both.
+        return [
+            {
+                type: 'input_text',
+                text: JSON.stringify({
+                    error: message,
+                }),
+            },
+            ...originalOutput,
+        ];
+    }
+    return JSON.stringify({
+        error: message,
+        originalOutput,
+    });
+}
+/**
+ * Parse a raw `FunctionCallOutputItem.output` value for HITL processing.
+ * JSON-parses string payloads when possible; leaves content arrays and
+ * non-string inputs untouched.
+ */
+function parseRawFunctionCallOutput(raw) {
+    if (typeof raw !== 'string') {
+        return raw;
+    }
+    try {
+        return JSON.parse(raw);
+    }
+    catch {
+        return raw;
+    }
+}
+/** Build a name → HITL tool map from the registered tools. */
+function buildHitlToolMap(tools) {
+    const map = new Map();
+    for (const t of tools) {
+        if (isHITLTool(t)) {
+            map.set(t.function.name, t);
+        }
+    }
+    return map;
+}
+/**
+ * Build a callId → tool-name map from `function_call` items in an input
+ * array, so `function_call_output` items can be associated with their tool.
+ */
+function buildCallIdToNameMap(input) {
+    const map = new Map();
+    for (const item of input) {
+        if (isFunctionCallItem(item)) {
+            map.set(item.callId, item.name);
+        }
+    }
+    return map;
+}
+/**
+ * Invoke `onResponseReceived`, validate the return against the tool's
+ * `outputSchema`, and convert the result (or any error) to a
+ * `FunctionCallOutputItem.output` payload.
+ */
+// biome-ignore lint: parameters match the internal API shape
+async function invokeOnResponseReceived(tool, parsed, context, contextStore, sharedSchema) {
+    const hook = tool.function.onResponseReceived;
+    if (!hook) {
+        throw new Error('invokeOnResponseReceived called without onResponseReceived hook');
+    }
+    /*
+     * Only the `function_call_output` item is in scope here — the originating
+     * call's arguments are not — so no synthetic `toolCall` is threaded. A
+     * caller-provided `turnContext.toolCall` still flows through.
+     */
+    const executeContext = buildExecuteCtx(tool, undefined, context, contextStore, sharedSchema);
+    try {
+        const hookResult = await Promise.resolve(hook(parsed, executeContext));
+        const validation = z4.safeParse(tool.function.outputSchema, hookResult);
+        if (!validation.success) {
+            return formatHookError(validation.error.message, parsed);
+        }
+        return toFunctionCallOutputValue(hookResult);
+    }
+    catch (err) {
+        // Preserve the caller's original output alongside the hook error so
+        // the model can distinguish a hook failure from a tool-reported error.
+        return formatHookError(err instanceof Error ? err.message : String(err), parsed);
+    }
+}
+/**
+ * Compute the (optional) replacement output for a single HITL
+ * `function_call_output` item. Returns `null` when the caller-supplied output
+ * is schema-conformant and should be left untouched.
+ */
+// biome-ignore lint: parameters match the internal API shape
+async function computeHitlItemOutput(tool, item, context, contextStore, sharedSchema) {
+    const parsed = parseRawFunctionCallOutput(item.output);
+    if (tool.function.onResponseReceived) {
+        return invokeOnResponseReceived(tool, parsed, context, contextStore, sharedSchema);
+    }
+    // No hook — validate the parsed raw output against outputSchema. On
+    // success, leave the item untouched; on failure, surface an error wrapper.
+    const validation = z4.safeParse(tool.function.outputSchema, parsed);
+    if (validation.success) {
+        return null;
+    }
+    return formatHookError(validation.error.message, parsed);
+}
+/**
+ * Walk the input items and apply HITL per-tool validation plus any
+ * `onResponseReceived` hooks.
+ *
+ * For each `function_call_output` item in `input`, locate the matching
+ * `function_call` (by `callId`) to identify the tool name. If that tool is a
+ * HITL tool, validate the value the model will see against the tool's
+ * `outputSchema`:
+ *
+ * - With `onResponseReceived`: invoke it with the parsed raw output, validate
+ *   the hook's return against `outputSchema`, then serialize (preserving
+ *   content-array shapes). Hook throws or validation failures are replaced
+ *   with `{error, originalOutput}` so the model sees a tool error.
+ * - Without `onResponseReceived`: validate the parsed raw output against
+ *   `outputSchema`. If it matches, leave the item untouched. Otherwise
+ *   replace with `{error, originalOutput}` using the same shape.
+ *
+ * Items that don't match a HITL tool are left untouched.
+ *
+ * @returns a new input array when any item was rewritten, otherwise the original input.
+ */
+// biome-ignore lint: parameters match the internal API shape
+export async function applyOnResponseReceivedHooks(input, tools, context, contextStore, sharedSchema) {
+    if (!tools || tools.length === 0 || !isItemArray(input)) {
+        return input;
+    }
+    const hitlByName = buildHitlToolMap(tools);
+    if (hitlByName.size === 0) {
+        return input;
+    }
+    const callIdToName = buildCallIdToNameMap(input);
+    let changed = false;
+    const rewritten = [];
+    for (const item of input) {
+        const tool = isFunctionCallOutputItem(item)
+            ? hitlByName.get(callIdToName.get(item.callId) ?? '')
+            : undefined;
+        if (!tool || !isFunctionCallOutputItem(item)) {
+            rewritten.push(item);
+            continue;
+        }
+        const newOutput = await computeHitlItemOutput(tool, item, context, contextStore, sharedSchema);
+        if (newOutput === null) {
+            rewritten.push(item);
+            continue;
+        }
+        rewritten.push({
+            ...item,
+            output: newOutput,
+        });
+        changed = true;
+    }
+    return changed ? rewritten : input;
+}
+//# sourceMappingURL=tool-executor.js.map

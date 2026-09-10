@@ -1,0 +1,1500 @@
+import type * as models from '@openrouter/sdk/models';
+import type { StreamEvents } from '@openrouter/sdk/models';
+import type { $ZodObject, $ZodShape, $ZodType, infer as zodInfer } from 'zod/v4/core';
+import type { DoomLoopSerializedState } from './doom-loop.js';
+import type { TaskLogLimits, ToolTaskMode, ToolTaskStatus } from './tool-task.js';
+/**
+ * Tool type enum for enhanced tools
+ */
+export declare enum ToolType {
+    Function = "function"
+}
+/**
+ * Narrow façade over a running task, handed to check-in `execute` handlers
+ * via `turnContext.task`. Lets a custom check read progress, steer, or
+ * cancel without exposing the full registry.
+ */
+export interface ToolTaskHandle {
+    readonly taskId: string;
+    readonly toolName: string;
+    readonly mode: ToolTaskMode;
+    /** Current lifecycle status. */
+    status(): ToolTaskStatus;
+    /** The `status` check-view summary. */
+    statusView(): Record<string, unknown>;
+    /** Last `n` log entries (oldest first). */
+    tailLogs(n: number): Array<{
+        seq: number;
+        at: number;
+        data: unknown;
+        kind: string;
+    }>;
+    /** Rendered transcript, truncated to `maxChars` keeping the tail. */
+    transcript(maxChars?: number): string;
+    /** Queue a steering message for the run body (`ctx.onMessage`). */
+    send(message: unknown): void;
+    /** Cancel the task. Returns true when a working task was cancelled. */
+    cancel(reason?: string): boolean;
+}
+/**
+ * Turn context passed to tool execute functions and async parameter resolution
+ * Contains information about the current conversation state
+ */
+export interface TurnContext {
+    /** The specific tool call being executed (only available during tool execution) */
+    toolCall?: models.FunctionCallItem;
+    /** Number of tool execution turns so far (1-indexed: first turn = 1, 0 = initial request) */
+    numberOfTurns: number;
+    /** The full request being sent to the API (only available during tool execution) */
+    turnRequest?: models.ResponsesRequest;
+    /**
+     * CHECK CALLS ONLY: lifecycle status of the task the model is checking on.
+     * Absent on every other path.
+     */
+    toolCallStatus?: ToolTaskStatus;
+    /**
+     * CHECK CALLS ONLY: the data of every retained yield/log from the task's
+     * `run` so far, oldest first. Absent on every other path.
+     */
+    accumulatedYieldedEvents?: unknown[];
+    /**
+     * CHECK CALLS ONLY: façade over the task being checked (read progress,
+     * steer via `send`, cancel). Absent on every other path.
+     */
+    task?: ToolTaskHandle;
+}
+/**
+ * Extract context schema type from a tool definition.
+ * Returns the inferred type of the tool's `contextSchema`, or
+ * `Record<string, never>` when the tool has no (required) contextSchema.
+ *
+ * Note: optional `contextSchema?: ...` does not match; tools produced by
+ * `tool()` only mark `contextSchema` as required when one was provided, so
+ * tools without a schema keep `Record<string, never>` map slots.
+ */
+export type InferToolContext<T> = T extends {
+    function: {
+        readonly contextSchema?: infer S;
+    };
+} ? [
+    S
+] extends [
+    $ZodObject<$ZodShape>
+] ? $ZodObject<$ZodShape> extends S ? Record<string, never> : zodInfer<S> extends Record<string, unknown> ? zodInfer<S> : zodInfer<S> & Record<string, unknown> : Record<string, never> : Record<string, never>;
+/**
+ * Resolve execute-context shape from a contextSchema generic.
+ * - Wide/default `$ZodObject<$ZodShape>` (no schema provided) → `Record<string, unknown>`
+ * - Concrete schema → its Zod-inferred shape
+ */
+export type ContextFromSchema<TCtx extends $ZodObject<$ZodShape>> = $ZodObject<$ZodShape> extends TCtx ? Record<string, unknown> : zodInfer<TCtx> extends Record<string, unknown> ? zodInfer<TCtx> : zodInfer<TCtx> & Record<string, unknown>;
+/**
+ * Extract tool name from a tool definition.
+ * Preserves literal names when present; falls back to `string`.
+ */
+export type InferToolName<T> = T extends {
+    function: {
+        name: infer N extends string;
+    };
+} ? N : string;
+/**
+ * Flat execute context passed as the second argument to tool execute functions.
+ * Merges TurnContext fields with a `local` getter (own tool context) and `setContext()`.
+ *
+ * @template TName - The tool's literal name string
+ * @template TContext - The shape of the tool's contextSchema
+ * @template TShared - The shape of the sharedContextSchema
+ */
+export type ToolExecuteContext<TName extends string = string, TContext extends Record<string, unknown> = Record<string, unknown>, TShared extends Record<string, unknown> = Record<string, unknown>> = TurnContext & {
+    /** The tool's name (type-level only, for generic inference) */
+    readonly _toolName?: TName;
+    /** This tool's own context (reads from the store, frozen snapshot) */
+    local: Readonly<TContext>;
+    /** Mutate this tool's context in the shared store (persists across turns) */
+    setContext(partial: Partial<TContext>): void;
+    /** Shared context visible to all tools */
+    shared: Readonly<TShared>;
+    /** Mutate the shared context in the store (persists across turns) */
+    setSharedContext(partial: Partial<TShared>): void;
+    /**
+     * Abort signal for this tool call. Fires when the run is aborted
+     * (`callModel`'s `signal` option or `ModelResult.cancel()`), when the
+     * tool's `timeoutMs` (or the run-level `toolTimeoutMs`) elapses, or when
+     * a background task is cancelled via `cancelTask`. Cooperative: tool
+     * bodies should pass it to their own I/O (fetch, child processes, ...).
+     * Always present — a never-aborting signal is supplied when no
+     * cancellation sources exist.
+     */
+    readonly signal: AbortSignal;
+    /** The id of the tool call being executed (for correlating external work). */
+    readonly callId?: string;
+    /**
+     * The conversation id when a `StateAccessor` is configured. Deferred
+     * tools typically hand this to the external system so its webhook can
+     * locate the conversation to resume.
+     */
+    readonly conversationId?: string;
+};
+declare const DEFERRED_BRAND: unique symbol;
+/**
+ * Returned by `ctx.defer()`. Returning it from `run` parks the call on a
+ * durable external task: the model gets a pending placeholder and the run
+ * pauses (`status: 'awaiting_async_tools'`) until the task is resolved via
+ * the tool's `.resolve()` / `.fail()` / `.cancel()` methods or
+ * `resumeToolResults()` — possibly from another process.
+ *
+ * Branded with TOutput so a handle from one tool cannot be returned from
+ * another whose outputSchema differs.
+ *
+ * Two distinct markers, deliberately:
+ * - `[DEFERRED_BRAND]` is TYPE-ONLY (`declare const` — no runtime value
+ *   exists) and carries the TOutput brand for compile-time safety.
+ * - `__deferred` is the RUNTIME marker {@link isDeferredHandle} checks.
+ *   `ctx.defer()` (the sole creator, in model-result.ts) always sets it.
+ * Changing either without the other breaks deferred-handle detection —
+ * keep them in sync.
+ */
+export interface DeferredHandle<TOutput = unknown> {
+    readonly [DEFERRED_BRAND]: TOutput;
+    /** Runtime marker set by `ctx.defer()`; checked by {@link isDeferredHandle}. */
+    readonly __deferred: true;
+    readonly taskId: string;
+    readonly pollAfterMs?: number;
+    readonly expiresAt?: number;
+    readonly ack?: string | Record<string, unknown>;
+}
+/** Runtime guard for {@link DeferredHandle} (structural — brand is type-only). */
+export declare function isDeferredHandle(value: unknown): value is DeferredHandle;
+/** Options for `ctx.defer()`. */
+export type DeferOptions = {
+    /** Poll-interval hint surfaced in the placeholder and to external pollers. */
+    pollAfterMs?: number;
+    /** Unix ms after which the task is considered expired. */
+    expiresAt?: number;
+    /** Model-facing note merged into the placeholder (overrides the tool-level `ack`). */
+    ack?: string | Record<string, unknown>;
+};
+/**
+ * Context passed to a unified tool's `run`. Extends the base execute
+ * context with the async-task affordances: deferral, logging, and the
+ * steering inbox.
+ */
+export type ToolRunContext<TName extends string = string, TContext extends Record<string, unknown> = Record<string, unknown>, TOutput = unknown, TShared extends Record<string, unknown> = Record<string, unknown>> = ToolExecuteContext<TName, TContext, TShared> & {
+    /**
+     * Park this call on a durable external task and return the handle:
+     * `return ctx.defer(ticket.id)`. Only valid on `lifecycle: 'deferred'`
+     * tools — throws elsewhere.
+     */
+    defer(taskId: string, options?: DeferOptions): DeferredHandle<TOutput>;
+    /**
+     * Append a log entry without yielding — progress for non-generator `run`
+     * bodies. Same pipeline as a yield: validated against `eventSchema` when
+     * declared, appended to the task log, surfaced as `tool.preliminary_result`.
+     */
+    log(entry: unknown): void;
+    /**
+     * Register a steering handler. Messages sent via a check call's
+     * `turnContext.task.send(...)` or `ModelResult.sendToTask()` are delivered
+     * here (queued until registration).
+     */
+    onMessage(handler: (message: unknown) => void): void;
+    /** The task's id (background/agent: engine-generated, present once escaped). */
+    readonly taskId?: string;
+};
+/**
+ * Context map keyed by tool name for callModel's `context` option.
+ * Each key is a tool's name, each value is that tool's inferred context type.
+ */
+export type ToolContextMap<T extends readonly Tool[]> = {
+    [K in T[number] as InferToolName<K>]: InferToolContext<K>;
+};
+/**
+ * Context map with an optional `shared` key for shared context.
+ * When TShared is provided (non-empty), a `shared` key is added to the map.
+ */
+export type ToolContextMapWithShared<T extends readonly Tool[], TShared extends Record<string, unknown> = Record<string, never>> = ToolContextMap<T> & (TShared extends Record<string, never> ? {} : {
+    shared: TShared;
+});
+/**
+ * Reserved key in the context store for shared context data.
+ * The tool name 'shared' is forbidden — it's reserved for this purpose.
+ */
+export declare const SHARED_CONTEXT_KEY: "shared";
+/**
+ * Context passed to nextTurnParams functions
+ * Contains current request state for parameter computation
+ * Allows modification of key request parameters between turns
+ */
+export type NextTurnParamsContext = {
+    /** Current input (messages) */
+    input: models.InputsUnion;
+    /**
+     * Current tool choice.
+     *
+     * Returning a new value changes which tools the model may call next turn
+     * without touching the `tools` array — the hook a tool-search tool uses to
+     * widen `{ type: 'allowed_tools', tools: [...] }` once it has found what it
+     * was looking for. Leaving `tools` alone is the point: rewriting it would
+     * invalidate the provider's prompt-cache prefix, which is usually the reason
+     * the caller is withholding tools in the first place.
+     */
+    toolChoice: models.ResponsesRequest['toolChoice'];
+    /** Current model selection */
+    model: string;
+    /** Current models array */
+    models: string[];
+    /** Current temperature */
+    temperature: number | null;
+    /** Current maxOutputTokens */
+    maxOutputTokens: number | null;
+    /** Current topP */
+    topP: number | null;
+    /** Current topK */
+    topK?: number | undefined;
+    /** Current instructions */
+    instructions: string | null;
+};
+/**
+ * Functions to compute next turn parameters
+ * Each function receives the tool's input params and current request context
+ */
+export type NextTurnParamsFunctions<TInput> = {
+    [K in keyof NextTurnParamsContext]?: {
+        bivarianceHack(params: TInput, context: NextTurnParamsContext): NextTurnParamsContext[K] | Promise<NextTurnParamsContext[K]>;
+    }['bivarianceHack'];
+};
+/**
+ * Tool-level approval check function type
+ * Receives the tool's input params and turn context
+ * Returns true if approval is required, false otherwise
+ */
+export type ToolApprovalCheck<TInput> = {
+    bivarianceHack(params: TInput, context: TurnContext): boolean | Promise<boolean>;
+}['bivarianceHack'];
+/**
+ * Function form of {@link ToolLoopKey}: computes the key material that
+ * identifies a call of this tool for doom-loop detection.
+ *
+ * The returned value is canonicalized (RFC 8785) and hashed by the engine —
+ * tools declare *what identifies a call*, the engine owns *how it is
+ * fingerprinted*. Two calls whose key material canonicalizes identically
+ * count as the same call.
+ *
+ * - Return a focused subset for precise identity: a web-search tool returns
+ *   its normalized query; a bash tool returns `{ command, cwd, env }`.
+ * - Return `null` to exempt THIS call from detection (e.g. a legitimate
+ *   repeat the tool can recognize from its arguments).
+ * - Returning `undefined` (a bare `return;`) is treated as a bug: the
+ *   engine warns and falls back to the full-arguments identity.
+ *
+ * Must be pure and deterministic. A throwing `loopKey` falls back to the
+ * full-arguments fingerprint (detection must never take down a run).
+ */
+export type ToolLoopKeyFn<TInput> = {
+    bivarianceHack(params: TInput): unknown;
+}['bivarianceHack'];
+/**
+ * Doom-loop identity declaration for a tool (see the `doomLoop` option on
+ * `callModel`). Computed like every other tool hook — a plain function over
+ * the call's validated arguments:
+ *
+ * - function — computes key material per call ({@link ToolLoopKeyFn}), e.g.
+ *   `({ command, cwd }) => ({ command, cwd })` for a bash tool. Returning
+ *   `null` exempts individual calls (a legitimate repeat the tool can
+ *   recognize from its arguments).
+ * - field-name array — the declarative subset identifying a call, e.g.
+ *   `['command', 'cwd']` for a bash tool. Data, not code: serializable, so
+ *   it survives tool caches and can be advertised over the MCP wire.
+ * - `false` — this tool is statically exempt (repetition is its job, e.g. a
+ *   status poller).
+ * - absent — the full validated arguments object is the identity.
+ */
+export type ToolLoopKey<TInput> = ToolLoopKeyFn<TInput> | readonly string[] | false;
+/**
+ * Content item types for tool output to model.
+ * These match the Responses API format for multimodal tool outputs.
+ */
+export type ToolOutputContentItem = {
+    type: 'input_text';
+    text: string;
+} | {
+    type: 'input_image';
+    detail: 'auto' | 'low' | 'high';
+    imageUrl: string;
+} | {
+    type: 'input_file';
+    fileId: string;
+    filename?: string;
+};
+/**
+ * Result of toModelOutput function.
+ * The 'content' type passes value array directly as tool output.
+ */
+export type ToModelOutputResult = {
+    type: 'content';
+    value: ToolOutputContentItem[];
+};
+/**
+ * Function to convert tool execution output to model-facing output.
+ * Receives the execute result and input arguments for full context.
+ * @template TInput - The tool's input type
+ * @template TOutput - The tool's output type
+ */
+export type ToModelOutputFunction<TInput, TOutput> = {
+    bivarianceHack(params: {
+        output: TOutput;
+        input: TInput;
+    }): ToModelOutputResult | Promise<ToModelOutputResult>;
+}['bivarianceHack'];
+/**
+ * Base tool function interface with inputSchema
+ * @template TInput - Zod schema for tool input
+ * @template TCtx - Zod schema for tool context (optional; default = erased wide type)
+ * @template TName - Literal tool name (default `string` keeps wide assignability)
+ */
+export interface BaseToolFunction<TInput extends $ZodObject<$ZodShape>, TCtx extends $ZodObject<$ZodShape> = $ZodObject<$ZodShape>, TName extends string = string> {
+    name: TName;
+    description?: string;
+    inputSchema: TInput;
+    /**
+     * Whether providers should enforce strict schema adherence when generating
+     * this tool's call arguments (OpenAI structured-outputs style). Serialized
+     * onto the wire tool definition; `null`/absent leaves provider default.
+     *
+     * OpenAI-style strict mode requires every declared object property to be
+     * listed in `required`. Use Zod `.nullable()` for values that may be absent
+     * conceptually; `.optional()` produces a schema those providers may reject.
+     * The SDK forwards the caller's schema unchanged.
+     */
+    strict?: boolean | null;
+    /**
+     * Zod schema declaring the context data this tool needs.
+     * `readonly` keeps TCtx covariant so tools carrying a concrete schema stay
+     * assignable to the wide `Tool` union.
+     */
+    readonly contextSchema?: TCtx;
+    nextTurnParams?: NextTurnParamsFunctions<zodInfer<TInput>>;
+    /**
+     * Whether this tool requires human approval before execution
+     * Can be a boolean or an async function that receives the tool's input params and context
+     */
+    requireApproval?: boolean | ToolApprovalCheck<zodInfer<TInput>>;
+    /**
+     * Doom-loop identity for this tool's calls — see {@link ToolLoopKey}.
+     * A computed function over the call's arguments, a field-name array
+     * (serializable — used by MCP tool caches), or `false` (exempt).
+     * Absent: the full validated arguments object is the identity.
+     */
+    loopKey?: ToolLoopKey<zodInfer<TInput>>;
+    /**
+     * Deadline for one execution of this tool, in milliseconds. When it
+     * elapses the round stops waiting: the model receives a
+     * `{ error, code: 'tool_timeout' }` output immediately and the tool's
+     * `ctx.signal` is aborted. The timeout bounds the round's WAIT, not the
+     * tool body's execution — a body that ignores its signal keeps running
+     * detached (its result is discarded). Overrides the run-level
+     * `toolTimeoutMs` default.
+     */
+    timeoutMs?: number;
+    /**
+     * Maximum simultaneous in-flight executions of THIS tool across the run
+     * — round-synchronous and background alike (background bodies re-acquire
+     * the gate for their full duration). Typically encodes an external
+     * constraint (one DB connection, a rate-limited API key). Excess calls
+     * queue FIFO. Queue wait does NOT count against `timeoutMs` for
+     * round-synchronous calls (the deadline starts once the slot is held);
+     * background tasks queue against their own registry-tracked timeout.
+     * Unbounded when absent.
+     */
+    maxConcurrency?: number;
+}
+/**
+ * Regular tool with synchronous or asynchronous execute function and optional outputSchema
+ * @template TContext - Shape of the tool's context (inferred from contextSchema)
+ * @template TName - The tool's literal name string
+ */
+export interface ToolFunctionWithExecute<TInput extends $ZodObject<$ZodShape>, TOutput extends $ZodType = $ZodType<unknown>, TContext extends Record<string, unknown> = Record<string, unknown>, TName extends string = string, TCtx extends $ZodObject<$ZodShape> = $ZodObject<$ZodShape>> extends BaseToolFunction<TInput, TCtx, TName> {
+    outputSchema?: TOutput;
+    /**
+     * Absent on regular tools. Declared as `undefined`-only so
+     * `UnifiedToolFunction` (which requires `run` and `lifecycle`) is
+     * structurally DISJOINT from this interface — type-guard narrowing must
+     * not keep unified tools in the regular-execute union.
+     */
+    readonly run?: undefined;
+    readonly lifecycle?: undefined;
+    execute(params: zodInfer<TInput>, context?: ToolExecuteContext<TName, TContext>): Promise<zodInfer<TOutput>> | zodInfer<TOutput>;
+    /** Convert tool execution output to model-facing output */
+    toModelOutput?: ToModelOutputFunction<zodInfer<TInput>, zodInfer<TOutput>>;
+}
+/**
+ * Generator-based tool with async generator execute function
+ * Emits preliminary events (validated by eventSchema) during execution
+ * and a final output (validated by outputSchema) as the last emission
+ *
+ * The generator can yield both events and the final output.
+ * All yields are validated against eventSchema (which should be a union of event and output types),
+ * and the last yield is additionally validated against outputSchema.
+ *
+ * @example
+ * ```typescript
+ * {
+ *   eventSchema: z.object({ status: z.string() }),  // For progress events
+ *   outputSchema: z.object({ result: z.number() }), // For final output
+ *   execute: async function* (params) {
+ *     yield { status: "processing..." };  // Event
+ *     yield { status: "almost done..." }; // Event
+ *     yield { result: 42 };               // Final output (must be last)
+ *   }
+ * }
+ * ```
+ */
+export interface ToolFunctionWithGenerator<TInput extends $ZodObject<$ZodShape>, TEvent extends $ZodType = $ZodType<unknown>, TOutput extends $ZodType = $ZodType<unknown>, TContext extends Record<string, unknown> = Record<string, unknown>, TName extends string = string, TCtx extends $ZodObject<$ZodShape> = $ZodObject<$ZodShape>> extends BaseToolFunction<TInput, TCtx, TName> {
+    eventSchema: TEvent;
+    outputSchema: TOutput;
+    execute(params: zodInfer<TInput>, context?: ToolExecuteContext<TName, TContext>): AsyncGenerator<zodInfer<TEvent> | zodInfer<TOutput>, zodInfer<TOutput> | undefined>;
+    /** Convert tool execution output to model-facing output */
+    toModelOutput?: ToModelOutputFunction<zodInfer<TInput>, zodInfer<TOutput>>;
+}
+/**
+ * Manual tool without execute function - requires manual handling by developer
+ */
+export interface ManualToolFunction<TInput extends $ZodObject<$ZodShape>, TOutput extends $ZodType = $ZodType<unknown>, TCtx extends $ZodObject<$ZodShape> = $ZodObject<$ZodShape>, TName extends string = string> extends BaseToolFunction<TInput, TCtx, TName> {
+    outputSchema?: TOutput;
+}
+/**
+ * Human-in-the-loop tool. Extends manual-tool semantics with two async hooks.
+ *
+ * `onToolCalled` fires when the model invokes the tool. Returning a value feeds
+ * the model directly (like regular `execute`); returning `null` pauses the loop
+ * like a manual tool, letting the caller resume later with a FunctionCallOutputItem.
+ *
+ * `onResponseReceived` fires on the next turn when an incoming FunctionCallOutputItem
+ * corresponds to a prior call of this tool (matched by callId → function_call.name).
+ * It receives the caller-supplied raw result and returns the value sent to the model.
+ * Throwing surfaces as a tool error to the model.
+ */
+export interface HITLToolFunction<TInput extends $ZodObject<$ZodShape>, TOutput extends $ZodType = $ZodType<unknown>, TContext extends Record<string, unknown> = Record<string, unknown>, TName extends string = string, TCtx extends $ZodObject<$ZodShape> = $ZodObject<$ZodShape>> extends BaseToolFunction<TInput, TCtx, TName> {
+    /**
+     * Required for HITL tools. Used to validate both the `onToolCalled` return
+     * value (when non-null) and the caller-supplied response that comes back via
+     * a matching `function_call_output` — whether transformed by
+     * `onResponseReceived` or passed through directly when no hook is defined.
+     */
+    outputSchema: TOutput;
+    onToolCalled(params: zodInfer<TInput>, context?: ToolExecuteContext<TName, TContext>): Promise<zodInfer<TOutput> | null> | zodInfer<TOutput> | null;
+    onResponseReceived?(rawResult: unknown, context?: ToolExecuteContext<TName, TContext>): Promise<zodInfer<TOutput>> | zodInfer<TOutput>;
+    toModelOutput?: ToModelOutputFunction<zodInfer<TInput>, zodInfer<TOutput>>;
+}
+/**
+ * Model-facing acknowledgement for an async tool's placeholder output.
+ * A string becomes the placeholder's `note`; an object is merged into the
+ * placeholder payload; a function computes either from the call's input.
+ */
+export type AsyncToolAck<TInput> = string | Record<string, unknown> | {
+    bivarianceHack(input: TInput): string | Record<string, unknown>;
+}['bivarianceHack'];
+/** How a unified tool's execution relates to the tool round. */
+export type ToolLifecycle = 'sync' | 'background' | 'deferred';
+/**
+ * Check-in configuration for a long-running tool. The model interacts with
+ * running tasks through the SINGLE universal `task` tool (`action:
+ * 'check' | 'steer' | 'result' | 'cancel'`, addressed by `taskId`); the
+ * engine dispatches those calls to the owning tool's config here — so the
+ * wire surface stays constant while the implementation stays tool-specific.
+ *
+ * - `true` — explicit opt-in to the SDK default handling (long-running
+ *   tools get it even without this).
+ * - `schema` — validates the task tool's free-form `params` object when the
+ *   model passes one to this tool's custom handler.
+ * - `execute` — custom check handler, replacing the SDK default for
+ *   `action: 'check'` calls targeting this tool's tasks. Receives the
+ *   validated `params` and a TurnContext populated with `toolCallStatus`,
+ *   `accumulatedYieldedEvents`, and the `task` handle. Its return value is
+ *   the tool output the model sees.
+ */
+export type ToolCheckConfig<TCheckParams = Record<string, unknown>> = true | {
+    /**
+     * Validation schema for the model-supplied `params` on check calls.
+     * SECURITY: `params` is MODEL INPUT (and models can be steered by
+     * injected tool/web content). Without a schema the handler receives
+     * the raw record — declare one whenever `execute` forwards params
+     * into steering/cancel or any other side effect, exactly as you
+     * would validate a tool's inputSchema.
+     */
+    schema?: $ZodObject<$ZodShape>;
+    execute?: {
+        bivarianceHack(params: TCheckParams, turnContext: TurnContext): unknown | Promise<unknown>;
+    }['bivarianceHack'];
+};
+/**
+ * The unified `run`-based tool kind. One shape covers every lifecycle:
+ *
+ * - `'sync'` (default): `run` is awaited in the round, exactly like `execute`.
+ * - `'background'`: the loop does not wait. Work settling within `graceMs`
+ *   behaves like a sync call; otherwise the model receives a pending
+ *   placeholder, the loop continues, and the return value is injected as a
+ *   `tool_task_result` envelope when it settles.
+ * - `'deferred'`: `run` may return `ctx.defer(taskId)` to park the call on a
+ *   durable external task — the run pauses (`awaiting_async_tools`) until
+ *   the task is resolved via `.resolve()`/`.fail()`/`.cancel()` or
+ *   `resumeToolResults()`, possibly from another process. Returning a plain
+ *   value resolves immediately (typed fast path).
+ *
+ * `run` is an async function or an async generator. Generator yields become
+ * the task's LOG entries (feeding check-in views and
+ * `tool.preliminary_result` events); the generator's RETURN value is the
+ * final result, validated against `outputSchema`. (This is stricter than
+ * legacy `execute` generators, which accept a final yield as the result.)
+ */
+export interface UnifiedToolFunction<TInput extends $ZodObject<$ZodShape>, TOutput extends $ZodType = $ZodType<unknown>, TEvent extends $ZodType = $ZodType<unknown>, TContext extends Record<string, unknown> = Record<string, unknown>, TName extends string = string, TCtx extends $ZodObject<$ZodShape> = $ZodObject<$ZodShape>> extends BaseToolFunction<TInput, TCtx, TName> {
+    /** Discriminator against every legacy kind. */
+    readonly lifecycle: ToolLifecycle;
+    /**
+     * Required for 'background' | 'deferred' (results settle after the round,
+     * possibly in another process). Optional for 'sync' (inferred from run).
+     */
+    outputSchema?: TOutput;
+    /** Validates `run` yields / `ctx.log()` entries when declared. */
+    eventSchema?: TEvent;
+    /** Model-facing acknowledgement merged into the pending placeholder. */
+    ack?: AsyncToolAck<zodInfer<TInput>>;
+    /**
+     * Background only: hold the round this long (ms) before emitting a
+     * placeholder. Work settling in-window produces a plain synchronous
+     * output. Default 250; `0` always placeholders.
+     */
+    graceMs?: number;
+    /** Deferred only: default poll-interval hint for tasks from this tool. */
+    pollAfterMs?: number;
+    /** Check-in configuration — see {@link ToolCheckConfig}. */
+    check?: ToolCheckConfig;
+    /** Set by `tool.agent()`: marks the run as a child-conversation driver. */
+    readonly kind?: 'agent';
+    /** Per-task log ring-buffer overrides. */
+    logLimits?: Partial<TaskLogLimits>;
+    run(params: zodInfer<TInput>, context?: ToolRunContext<TName, TContext, zodInfer<TOutput>>): Promise<zodInfer<TOutput> | DeferredHandle<zodInfer<TOutput>>> | zodInfer<TOutput> | DeferredHandle<zodInfer<TOutput>> | AsyncGenerator<zodInfer<TEvent>, zodInfer<TOutput> | DeferredHandle<zodInfer<TOutput>>>;
+    /**
+     * Convert tool execution output to model-facing output.
+     *
+     * ROUND-SYNCHRONOUS RESULTS ONLY: applies to `lifecycle: 'sync'` results
+     * and background work that settles inside its grace window — the paths
+     * that produce a `function_call_output`. Late-delivered results
+     * (background past the grace window, deferred completions) arrive as a
+     * `tool_task_result` JSON envelope in a user-role message, which cannot
+     * carry this mapper's content-item arrays; they deliver the validated
+     * output verbatim.
+     */
+    toModelOutput?: ToModelOutputFunction<zodInfer<TInput>, zodInfer<TOutput>>;
+    /** Absent on unified tools — keeps them disjoint from legacy kinds. */
+    readonly execute?: undefined;
+    readonly onToolCalled?: undefined;
+}
+/**
+ * Tool with execute function (regular or generator)
+ * @template TCtx - The concrete contextSchema type when one was provided to `tool()`
+ */
+export type ToolWithExecute<TInput extends $ZodObject<$ZodShape> = $ZodObject<$ZodShape>, TOutput extends $ZodType = $ZodType<unknown>, TContext extends Record<string, unknown> = Record<string, unknown>, TCtx extends $ZodObject<$ZodShape> = $ZodObject<$ZodShape>, TName extends string = string> = {
+    type: ToolType.Function;
+    function: ToolFunctionWithExecute<TInput, TOutput, TContext, TName, TCtx>;
+};
+/**
+ * Tool with generator execute function
+ * @template TCtx - The concrete contextSchema type when one was provided to `tool()`
+ */
+export type ToolWithGenerator<TInput extends $ZodObject<$ZodShape> = $ZodObject<$ZodShape>, TEvent extends $ZodType = $ZodType<unknown>, TOutput extends $ZodType = $ZodType<unknown>, TContext extends Record<string, unknown> = Record<string, unknown>, TCtx extends $ZodObject<$ZodShape> = $ZodObject<$ZodShape>, TName extends string = string> = {
+    type: ToolType.Function;
+    function: ToolFunctionWithGenerator<TInput, TEvent, TOutput, TContext, TName, TCtx>;
+};
+/**
+ * Tool without execute function (manual handling)
+ * @template TCtx - The concrete contextSchema type when one was provided to `tool()`
+ */
+export type ManualTool<TInput extends $ZodObject<$ZodShape> = $ZodObject<$ZodShape>, TOutput extends $ZodType = $ZodType<unknown>, TCtx extends $ZodObject<$ZodShape> = $ZodObject<$ZodShape>, TName extends string = string> = {
+    type: ToolType.Function;
+    function: ManualToolFunction<TInput, TOutput, TCtx, TName>;
+};
+/**
+ * Human-in-the-loop tool (with onToolCalled / onResponseReceived hooks)
+ * @template TCtx - The concrete contextSchema type when one was provided to `tool()`
+ */
+export type HITLTool<TInput extends $ZodObject<$ZodShape> = $ZodObject<$ZodShape>, TOutput extends $ZodType = $ZodType<unknown>, TContext extends Record<string, unknown> = Record<string, unknown>, TCtx extends $ZodObject<$ZodShape> = $ZodObject<$ZodShape>, TName extends string = string> = {
+    type: ToolType.Function;
+    function: HITLToolFunction<TInput, TOutput, TContext, TName, TCtx>;
+};
+/**
+ * Unified tool wrapper (`tool()` with `run`)
+ * @template TCtx - The concrete contextSchema type when one was provided
+ */
+export type UnifiedTool<TInput extends $ZodObject<$ZodShape> = $ZodObject<$ZodShape>, TOutput extends $ZodType = $ZodType<unknown>, TEvent extends $ZodType = $ZodType<unknown>, TContext extends Record<string, unknown> = Record<string, unknown>, TCtx extends $ZodObject<$ZodShape> = $ZodObject<$ZodShape>, TName extends string = string> = {
+    type: ToolType.Function;
+    function: UnifiedToolFunction<TInput, TOutput, TEvent, TContext, TName, TCtx>;
+};
+/**
+ * Union type of all client-executed tool shapes (function, generator, manual,
+ * HITL, unified `run`). These run in the user's process via the agent SDK's
+ * tool execution loop.
+ */
+export type ClientTool = ToolWithExecute<$ZodObject<$ZodShape>, $ZodType<unknown>> | ToolWithGenerator<$ZodObject<$ZodShape>, $ZodType<unknown>, $ZodType<unknown>> | ManualTool<$ZodObject<$ZodShape>, $ZodType<unknown>> | HITLTool<$ZodObject<$ZodShape>, $ZodType<unknown>> | UnifiedTool<$ZodObject<$ZodShape>, $ZodType<unknown>, $ZodType<unknown>>;
+/**
+ * Config payload for an OpenRouter server-executed tool. Derived directly
+ * from the SDK's request-tool union so new server tools flow through with
+ * zero agent-SDK changes. Excludes the client `function` branch — only
+ * server-side variants remain.
+ */
+export type ServerToolConfig = Exclude<models.ResponsesRequestToolUnion, {
+    type: 'function';
+}>;
+/**
+ * The discriminator literals for every server tool known to the SDK
+ * (e.g. `"web_search_2025_08_26"`, `"openrouter:datetime"`, `"image_generation"`).
+ */
+export type ServerToolType = ServerToolConfig['type'];
+/**
+ * Structural base type for every server tool. Interface extension (not a
+ * distributive conditional) is used so the narrow-T subtype assigns cleanly
+ * into the wide-T supertype via nominal inheritance — TypeScript treats
+ * `ServerTool<'web_search_2025_08_26'>` as a subtype of `ServerToolBase`
+ * without needing to reason about variance through `Extract<..., {type: T}>`.
+ *
+ * `Tool` uses `ServerToolBase` as its union member (rather than a generic
+ * `ServerTool` parameterized on a union) so specific `ServerTool<T>` values
+ * assign into `Tool[]` directly.
+ */
+export interface ServerToolBase {
+    readonly _brand: 'server-tool';
+    readonly config: ServerToolConfig;
+    /**
+     * Stable tool-set identity used by `@openrouter/agent-tool-set` activation.
+     * Defaults to `server:${config.type}` when constructed via {@link serverTool}.
+     *
+     * Optional here for source compatibility with legacy hand-constructed
+     * `ServerToolBase` values that predate this field. `ServerTool<T, TId>`
+     * (the type returned by {@link serverTool}) still requires it as a
+     * literal `TId` via interface narrowing below.
+     */
+    readonly id?: string;
+}
+/**
+ * A server-executed tool. OpenRouter runs the tool and returns an output
+ * item in the response — no execute function lives on the client. When
+ * the type parameter `T` is a specific literal, `config` narrows to the
+ * SDK shape for that tool. Because this interface `extends ServerToolBase`,
+ * any `ServerTool<T>` value is nominally assignable to `ServerToolBase`
+ * (and hence to `Tool`) regardless of `T`.
+ *
+ * @template T The specific server-tool type literal (narrows `config`).
+ * @template TId Stable tool-set ID (defaults to `server:${T}`).
+ */
+export interface ServerTool<T extends ServerToolType = ServerToolType, TId extends string = `server:${T}`> extends ServerToolBase {
+    readonly config: Extract<ServerToolConfig, {
+        type: T;
+    }>;
+    readonly id: TId;
+}
+/**
+ * Union of every tool kind accepted by `callModel({ tools: [...] })`:
+ * client function/generator/manual tools, or OpenRouter server tools.
+ * The server branch is the structural base; specific `ServerTool<T>`
+ * values flow in via interface extension.
+ */
+export type Tool = ClientTool | ServerToolBase;
+/**
+ * Server-tool output items that appear in `response.output`. Derived from
+ * the SDK's `OutputItems` union by removing the client-owned variants
+ * (message, reasoning, function_call). Every remaining branch — including
+ * server-tool-specific shapes like `OutputDatetimeItem`,
+ * `OutputWebSearchServerToolItem`, `OutputMcpServerToolItem`, and the
+ * SDK's forward-compat `Unknown<"type">` catch-all — flows through
+ * automatically when the SDK adds new server-tool variants.
+ */
+export type ServerToolResultItem = Exclude<models.OutputItems, {
+    type: 'message';
+} | {
+    type: 'reasoning';
+} | {
+    type: 'function_call';
+}>;
+/**
+ * Unified tool-result item: either a client function output we construct
+ * and send back, or a server-tool output item from OpenRouter. Populated
+ * on `ModelResult.allToolExecutionRounds[].toolResults`.
+ */
+export type ToolResultItem = models.FunctionCallOutputItem | ServerToolResultItem;
+/**
+ * Extracts the input type from a tool definition
+ */
+export type InferToolInput<T> = T extends {
+    function: {
+        inputSchema: infer S;
+    };
+} ? S extends $ZodType ? zodInfer<S> : unknown : unknown;
+/**
+ * Extracts the output type from a tool definition
+ */
+export type InferToolOutput<T> = T extends {
+    function: {
+        outputSchema: infer S;
+    };
+} ? S extends $ZodType ? zodInfer<S> : unknown : unknown;
+/**
+ * A tool call with typed arguments based on the tool's inputSchema
+ */
+export type TypedToolCall<T extends Tool> = {
+    id: string;
+    name: T extends {
+        function: {
+            name: infer N;
+        };
+    } ? N : string;
+    arguments: InferToolInput<T>;
+};
+/**
+ * Union of typed tool calls for a tuple of tools
+ */
+export type TypedToolCallUnion<T extends readonly Tool[]> = {
+    [K in keyof T]: T[K] extends Tool ? TypedToolCall<T[K]> : never;
+}[number];
+/**
+ * Union of typed tool execution results for a tuple of tools
+ */
+export type ToolExecutionResultUnion<T extends readonly Tool[]> = {
+    [K in keyof T]: T[K] extends Tool ? ToolExecutionResult<T[K]> : never;
+}[number];
+/**
+ * Union of output types for all tools in a tuple
+ * Used for typing tool result events
+ */
+export type InferToolOutputsUnion<T extends readonly Tool[]> = {
+    [K in keyof T]: T[K] extends Tool ? InferToolOutput<T[K]> : never;
+}[number];
+/**
+ * Extracts the event type from a generator tool definition
+ * Returns `never` for non-generator tools
+ */
+export type InferToolEvent<T> = T extends {
+    function: {
+        eventSchema: infer S;
+    };
+} ? S extends $ZodType ? zodInfer<S> : never : never;
+/**
+ * Union of event types for all generator tools in a tuple
+ * Filters out non-generator tools (which return `never`)
+ */
+export type InferToolEventsUnion<T extends readonly Tool[]> = {
+    [K in keyof T]: T[K] extends Tool ? InferToolEvent<T[K]> : never;
+}[number];
+/**
+ * Type guard: discriminates server-executed tools from client tools.
+ *
+ * Relies on the `_brand` discriminator that `ServerToolBase` declares and
+ * `ClientTool` lacks. `'_brand' in tool` narrows the union to the server
+ * branch structurally, so `tool._brand` is reachable without a cast.
+ */
+export declare function isServerTool(tool: Tool): tool is ServerToolBase;
+/**
+ * A client tool additionally branded as originating from an MCP server. The
+ * `_mcp` marker is purely informational: it does NOT change how the tool is
+ * executed (MCP tools keep their local `execute` fn and run through the normal
+ * client-tool path) or serialized (they go on the wire as `type: 'function'`).
+ * It exists only so result types can discriminate MCP results — whose output
+ * schema is `unknown` at compile time — from precisely-typed client tools,
+ * preventing a single MCP tool from collapsing the whole result union.
+ */
+export type McpBranded<T extends Tool = Tool> = T & {
+    readonly _mcp: true;
+};
+/**
+ * Type guard: true if the tool carries the additive MCP brand (see
+ * {@link McpBranded}). Structural check on `_mcp`, so no cast is needed.
+ */
+export declare function isMcpTool(tool: Tool): tool is McpBranded;
+/**
+ * Type guard: true if the tool is a client-executed tool (function, generator, or manual).
+ */
+export declare function isClientTool(tool: Tool): tool is ClientTool;
+/**
+ * Type guard to check if a tool is a unified `run`-based tool
+ */
+export declare function isUnifiedTool(tool: Tool): tool is UnifiedTool;
+/**
+ * True when the tool can outlive its round: a unified tool with a
+ * non-'sync' lifecycle. Drives check-schema generation and placeholder
+ * wording.
+ */
+export declare function isLongRunningTool(tool: Tool): boolean;
+/**
+ * True when the tool is an agent tool (`tool.agent()`): a unified tool
+ * whose run drives a child conversation.
+ */
+export declare function isAgentTool(tool: Tool): boolean;
+/**
+ * Type guard to check if a tool has an execute function (regular or
+ * generator). Unified `run` tools are excluded — they have their own
+ * dispatch and this guard's predicate would misclassify them.
+ */
+export declare function hasExecuteFunction(tool: Tool): tool is ToolWithExecute | ToolWithGenerator;
+/**
+ * Type guard to check if a tool uses a generator (has eventSchema).
+ * Unified tools may declare an `eventSchema` for run yields but are not
+ * legacy generator tools.
+ */
+export declare function isGeneratorTool(tool: Tool): tool is ToolWithGenerator;
+/**
+ * Type guard to check if a tool is a regular execution tool (not generator)
+ */
+export declare function isRegularExecuteTool(tool: Tool): tool is ToolWithExecute;
+/**
+ * Type guard to check if a tool is a manual tool (no execute, no onToolCalled, no run)
+ */
+export declare function isManualTool(tool: Tool): tool is ManualTool;
+/**
+ * Type guard to check if a tool is a human-in-the-loop tool (has onToolCalled)
+ */
+export declare function isHITLTool(tool: Tool): tool is HITLTool;
+/**
+ * Type guard: true if the tool can be auto-resolved within a turn — through a
+ * client execute/generator function, a HITL onToolCalled hook, or a unified
+ * `run` (which always produces at least a placeholder output). Returns false
+ * for manual tools (which always pause) and server tools.
+ */
+export declare function isAutoResolvableTool(tool: Tool): tool is ToolWithExecute | ToolWithGenerator | HITLTool | UnifiedTool;
+/**
+ * Parsed tool call from API response
+ * @template T - The tool type to infer argument types from
+ */
+export interface ParsedToolCall<T extends Tool> {
+    id: string;
+    name: T extends {
+        function: {
+            name: infer N;
+        };
+    } ? N : string;
+    arguments: InferToolInput<T>;
+}
+export type PendingToolCall<T extends Tool> = ParsedToolCall<T> & {
+    /** PreToolUse already ran and `arguments` contains its effective input. */
+    preToolUseApplied?: true;
+};
+/**
+ * Result of tool execution.
+ *
+ * The `_mcp` brand is tested BEFORE the execute/generator branch: an MCP tool
+ * is structurally also a `ToolWithExecute`, so checking the brand last would let
+ * its `unknown` output flow through and collapse the result union. Brand-first
+ * isolates MCP results as `unknown` under `source: 'mcp'` while every other tool
+ * keeps its precise, schema-derived result under `source: 'client'`. Consumers
+ * narrow on `source` (narrowing on the `toolName` literal alone does not exclude
+ * the MCP branch, whose `toolName` is `string`).
+ *
+ * @template T - The tool type to infer result types from
+ */
+export interface ToolExecutionResult<T extends Tool> {
+    toolCallId: string;
+    toolName: T extends {
+        function: {
+            name: infer N extends string;
+        };
+    } ? N : string;
+    source: ToolSource<T>;
+    result: T extends {
+        readonly _mcp: true;
+    } ? unknown : [
+        Tool
+    ] extends [
+        T
+    ] ? unknown : T extends ToolWithExecute<$ZodObject<$ZodShape>, infer O> | ToolWithGenerator<$ZodObject<$ZodShape>, $ZodType<unknown>, infer O> ? zodInfer<O> : unknown;
+    preliminaryResults?: T extends ToolWithGenerator<$ZodObject<$ZodShape>, infer E> ? zodInfer<E>[] : undefined;
+    error?: Error;
+}
+/**
+ * The `source` discriminant for a tool result. A specific MCP-branded tool is
+ * `'mcp'`; a specific client tool is `'client'`; the wide `Tool` (used by the
+ * internal executor before the concrete tool type is known) is the full union,
+ * so a runtime-computed `'client' | 'mcp'` assigns into it.
+ */
+export type ToolSource<T extends Tool> = [
+    Tool
+] extends [
+    T
+] ? 'client' | 'mcp' : [
+    T
+] extends [
+    {
+        readonly _mcp: true;
+    }
+] ? 'mcp' : 'client';
+/**
+ * Warning from step execution
+ */
+export interface Warning {
+    type: string;
+    message: string;
+}
+/**
+ * Result of a single step in the tool execution loop
+ * Compatible with Vercel AI SDK pattern
+ */
+export interface StepResult<TTools extends readonly Tool[] = readonly Tool[]> {
+    readonly stepType: 'initial' | 'continue';
+    readonly text: string;
+    readonly toolCalls: TypedToolCallUnion<TTools>[];
+    /**
+     * Client function tool results ONLY. Server-tool results
+     * (web_search_call, image_generation_call, file_search_call,
+     * openrouter:datetime, and other server-side tool output items) are NOT
+     * included here — see {@link StepResult.serverToolResults} for those.
+     */
+    readonly toolResults: ToolExecutionResultUnion<TTools>[];
+    /**
+     * Server-side tool result items emitted by OpenRouter as part of the
+     * model response (e.g. `web_search_call`, `image_generation_call`,
+     * `file_search_call`, `openrouter:datetime`, and any other server-tool
+     * output variant in the SDK's `OutputItems` union).
+     *
+     * These results are produced by the provider rather than executed by
+     * the client, so they do not flow through the client `toolResults`
+     * array. Stop conditions that want to react to server-tool invocations
+     * (for example, stopping after the model performs a web search) should
+     * inspect this field.
+     *
+     * Optional for back-compat: earlier releases of this type did not
+     * populate server-tool results in step history.
+     */
+    readonly serverToolResults?: ServerToolResultItem[];
+    readonly response: models.OpenResponsesResult;
+    readonly usage?: models.Usage | null | undefined;
+    readonly finishReason?: string | undefined;
+    readonly warnings?: Warning[] | undefined;
+    readonly experimental_providerMetadata?: Record<string, unknown> | undefined;
+}
+/**
+ * A condition function that determines whether to stop tool execution
+ * Returns true to STOP execution, false to CONTINUE
+ * (Matches Vercel AI SDK semantics)
+ */
+export type StopCondition<TTools extends readonly Tool[] = readonly Tool[]> = (options: {
+    readonly steps: ReadonlyArray<StepResult<TTools>>;
+}) => boolean | Promise<boolean>;
+/**
+ * Stop condition configuration
+ * Can be a single condition or array of conditions
+ */
+export type StopWhen<TTools extends readonly Tool[] = readonly Tool[]> = StopCondition<TTools> | ReadonlyArray<StopCondition<TTools>>;
+/**
+ * Standard tool format for OpenRouter API (JSON Schema based)
+ * Matches ResponsesRequestToolFunction structure
+ */
+export interface APITool {
+    type: 'function';
+    name: string;
+    description?: string | null;
+    strict?: boolean | null;
+    parameters: {
+        [k: string]: unknown;
+    } | null;
+}
+/**
+ * Tool preliminary result event emitted during generator tool execution
+ * @template TEvent - The event type from the tool's eventSchema
+ * @template TName - The tool's name (literal when known)
+ */
+export type ToolPreliminaryResultEvent<TEvent = unknown, TName extends string = string> = {
+    type: 'tool.preliminary_result';
+    toolCallId: string;
+    /**
+     * Name of the tool that produced this preliminary result.
+     * Optional for source compatibility with legacy hand-constructed events
+     * that predate this field; {@link CorrelatedToolPreliminaryResultEvent}
+     * re-requires it as a literal for a concrete tool.
+     */
+    toolName?: TName;
+    result: TEvent;
+    timestamp: number;
+};
+/**
+ * Tool result event emitted when a tool execution completes
+ * Contains the final result and any preliminary results that were emitted
+ * @template TResult - The result type from the tool's outputSchema
+ * @template TPreliminaryResults - The event type from generator tools' eventSchema
+ * @template TName - The tool's name (literal when known)
+ */
+export type ToolResultEvent<TResult = unknown, TPreliminaryResults = unknown, TName extends string = string> = {
+    type: 'tool.result';
+    toolCallId: string;
+    /**
+     * Name of the tool that produced this result.
+     * Optional for source compatibility with legacy hand-constructed events
+     * that predate this field; {@link CorrelatedToolResultEvent} re-requires
+     * it as a literal for a concrete tool.
+     */
+    toolName?: TName;
+    /**
+     * Origin of the tool: `'mcp'` for tools wrapped from a remote MCP server
+     * (whose `result` is `unknown`), `'client'` for locally-defined tools. Lets
+     * consumers discriminate so an MCP result's `unknown` doesn't force callers to
+     * treat every tool result as untyped.
+     */
+    source: 'client' | 'mcp';
+    result: TResult;
+    timestamp: number;
+    preliminaryResults?: TPreliminaryResults[];
+};
+/**
+ * Name-correlated preliminary result event for one concrete tool.
+ * Narrowing on `toolName` recovers this tool's event payload type.
+ *
+ * `toolName` is optional on the underlying {@link ToolPreliminaryResultEvent}
+ * base (for legacy source compatibility), so it's overridden back to a
+ * required literal here via `Omit<...> & {...}` — parameterizing the base
+ * type alone does not re-require an optional field.
+ */
+export type CorrelatedToolPreliminaryResultEvent<T extends Tool> = Omit<ToolPreliminaryResultEvent<InferToolEvent<T>, InferToolName<T>>, 'toolName'> & {
+    toolName: InferToolName<T>;
+};
+/**
+ * Name-correlated final result event for one concrete tool.
+ * Narrowing on `toolName` recovers this tool's result (and preliminary) types.
+ *
+ * `toolName` is optional on the underlying {@link ToolResultEvent} base (for
+ * legacy source compatibility), so it's overridden back to a required
+ * literal here via `Omit<...> & {...}` — parameterizing the base type alone
+ * does not re-require an optional field.
+ *
+ * `result` unions in `{ error: string }` for concrete tools: at runtime,
+ * `ModelResult` broadcasts this exact shape under the same `tool.result`
+ * type and `toolName` for parse failures, thrown/rejected executions, and
+ * tool-reported execution errors (see `broadcastToolResult` call sites in
+ * `model-result.ts`). Without this, narrowing by `toolName` would let a
+ * consumer safely (but incorrectly) access success-only output fields on an
+ * error payload. The `_mcp: true` branch and the generic `readonly Tool[]`
+ * fallback branch are left as `unknown`, which already structurally permits
+ * `{ error: string }` — only the concrete-tool success branch needs the
+ * explicit union.
+ */
+export type CorrelatedToolResultEvent<T extends Tool> = Omit<ToolResultEvent<T extends {
+    readonly _mcp: true;
+} ? unknown : [
+    Tool
+] extends [
+    T
+] ? unknown : (T extends ToolWithExecute<$ZodObject<$ZodShape>, infer O> | ToolWithGenerator<$ZodObject<$ZodShape>, $ZodType<unknown>, infer O> | HITLTool<$ZodObject<$ZodShape>, infer O> ? zodInfer<O> : InferToolOutput<T>) | {
+    error: string;
+}, T extends ToolWithGenerator<$ZodObject<$ZodShape>, infer E> ? zodInfer<E> : never, InferToolName<T>>, 'toolName'> & {
+    toolName: InferToolName<T>;
+    source: ToolSource<T>;
+};
+/**
+ * Widest backward-compatible shape for {@link CorrelatedToolEventUnion} when
+ * `T` is the generic `readonly Tool[]` (e.g. a tool handle from
+ * `@openrouter/mcp`, whose concrete tuple isn't known at the type level).
+ * Mirrors the pre-existing {@link ToolPreliminaryResultEvent} /
+ * {@link ToolResultEvent} default shapes.
+ */
+type WidestCorrelatedToolEvent = ToolPreliminaryResultEvent | ToolResultEvent;
+/**
+ * Final result emitted by the engine-injected `task` tool used to inspect,
+ * steer, fetch, or cancel long-running tasks. The payload is `unknown`
+ * because custom check handlers and completed task results are user-defined.
+ */
+export type BuiltinTaskToolEvent = Omit<ToolResultEvent<unknown, never, 'task'>, 'toolName'> & {
+    toolName: 'task';
+    source: 'client';
+};
+/**
+ * Discriminated union of name-correlated tool events across a tools tuple.
+ * Checking `event.toolName === 'my_tool'` narrows `result` to that tool's output.
+ *
+ * For the generic `readonly Tool[]` case, falls back to the widest
+ * backward-compatible shape instead of collapsing to `never`: the mapped-type
+ * check `T[K] extends ClientTool` is a non-distributive check on the indexed
+ * access `T[K]` (only a *naked* type parameter distributes over a union), so
+ * when `T[K]` resolves to the full `Tool` union (`ClientTool | ServerToolBase`)
+ * the check fails as a monolithic comparison rather than narrowing per-member.
+ */
+export type CorrelatedToolEventUnion<T extends readonly Tool[]> = BuiltinTaskToolEvent | (readonly Tool[] extends T ? WidestCorrelatedToolEvent : {
+    [K in keyof T]: T[K] extends ClientTool ? CorrelatedToolPreliminaryResultEvent<T[K]> | CorrelatedToolResultEvent<T[K]> : never;
+}[number]);
+/**
+ * Widest backward-compatible shape for {@link CorrelatedToolStreamPreliminaryUnion}
+ * when `T` is the generic `readonly Tool[]`. Mirrors the pre-existing
+ * {@link ToolStreamEvent} preliminary-result shape.
+ */
+type WidestCorrelatedToolStreamPreliminary = {
+    type: 'preliminary_result';
+    toolCallId: string;
+    toolName: string;
+    result: unknown;
+};
+/**
+ * Discriminated union of name-correlated preliminary stream events
+ * (legacy `getToolStream` shape) across a tools tuple. Falls back to the
+ * widest backward-compatible shape for the generic `readonly Tool[]` case;
+ * see {@link CorrelatedToolEventUnion} for why the naive mapped check collapses.
+ */
+export type CorrelatedToolStreamPreliminaryUnion<T extends readonly Tool[]> = readonly Tool[] extends T ? WidestCorrelatedToolStreamPreliminary : {
+    [K in keyof T]: T[K] extends ClientTool ? {
+        type: 'preliminary_result';
+        toolCallId: string;
+        toolName: InferToolName<T[K]>;
+        result: InferToolEvent<T[K]>;
+    } : never;
+}[number];
+/**
+ * Tool call output event carrying the fully-formed FunctionCallOutputItem.
+ * Broadcast by executeToolRound so passive consumers (getItemsStream) can yield
+ * tool results in real-time without owning tool execution.
+ */
+export type ToolCallOutputEvent = {
+    type: 'tool.call_output';
+    output: models.FunctionCallOutputItem;
+    timestamp: number;
+};
+/**
+ * Emitted when an async tool call escapes the round: a background tool's
+ * execute outlived its grace window, or a deferred tool's start returned a
+ * task handle. The model has received a pending placeholder output.
+ */
+export type ToolAsyncStartedEvent = {
+    type: 'tool.async_started';
+    toolCallId: string;
+    toolName: string;
+    taskId: string;
+    mode: ToolTaskMode;
+    /** The model-facing acknowledgement carried in the placeholder, if any. */
+    ack?: unknown;
+    timestamp: number;
+};
+/**
+ * Emitted when an async tool task settles — completed, failed, cancelled,
+ * timed out, or expired. `delivery` reports how (or whether) the outcome
+ * reached the model: `'injected'` into this run's conversation,
+ * `'pending_resume'` recorded on state for the next run, or `'dropped'`
+ * (run ended under `onRunEnd: 'detach'`).
+ */
+export type ToolAsyncSettledEvent<TResult = unknown> = {
+    type: 'tool.async_settled';
+    toolCallId: string;
+    taskId: string;
+    status: 'completed' | 'failed' | 'cancelled' | 'timed_out' | 'expired';
+    result?: TResult;
+    error?: string;
+    delivery: 'injected' | 'pending_resume' | 'dropped';
+    timestamp: number;
+};
+/**
+ * Turn start event emitted at the beginning of each API turn
+ * Turn 0 is the initial request, subsequent turns follow tool execution
+ */
+export type TurnStartEvent = {
+    type: 'turn.start';
+    turnNumber: number;
+    timestamp: number;
+};
+/**
+ * Turn end event emitted at the end of each API turn
+ */
+export type TurnEndEvent = {
+    type: 'turn.end';
+    turnNumber: number;
+    timestamp: number;
+};
+/**
+ * Enhanced stream event types for getFullResponsesStream
+ * Extends StreamEvents with tool preliminary results, tool results,
+ * and turn delimiter events for multi-turn streaming
+ * @template TEvent - The event type from generator tools
+ * @template TResult - The result type from tool execution
+ * @template TName - Tool name (literal when known)
+ */
+export type ResponseStreamEvent<TEvent = unknown, TResult = unknown, TName extends string = string> = StreamEvents | ToolPreliminaryResultEvent<TEvent, TName> | ToolResultEvent<TResult, TEvent, TName> | ToolCallOutputEvent | ToolAsyncStartedEvent | ToolAsyncSettledEvent<TResult> | TurnStartEvent | TurnEndEvent;
+/**
+ * Name-correlated stream events for a concrete tools tuple.
+ * Prefer this (or {@link ModelResult.getFullResponsesStream}) when callers need
+ * `event.toolName` narrowing; the default {@link ResponseStreamEvent} keeps a
+ * wide, backward-compatible shape.
+ */
+export type CorrelatedResponseStreamEvent<TTools extends readonly Tool[]> = StreamEvents | CorrelatedToolEventUnion<TTools> | ToolCallOutputEvent | ToolAsyncStartedEvent | ToolAsyncSettledEvent<InferToolOutputsUnion<TTools>> | TurnStartEvent | TurnEndEvent;
+/**
+ * Type guard to check if an event is a tool async started event
+ */
+export declare function isToolAsyncStartedEvent(event: ResponseStreamEvent): event is ToolAsyncStartedEvent;
+/**
+ * Type guard to check if an event is a tool async settled event
+ */
+export declare function isToolAsyncSettledEvent<TResult = unknown>(event: ResponseStreamEvent<unknown, TResult>): event is ToolAsyncSettledEvent<TResult>;
+/**
+ * Type guard to check if an event is a tool preliminary result event
+ */
+export declare function isToolPreliminaryResultEvent<TEvent = unknown, TName extends string = string>(event: ResponseStreamEvent<TEvent, unknown, TName>): event is ToolPreliminaryResultEvent<TEvent, TName>;
+/**
+ * Type guard to check if an event is a tool result event
+ */
+export declare function isToolResultEvent<TResult = unknown, TPreliminaryResults = unknown, TName extends string = string>(event: ResponseStreamEvent<TPreliminaryResults, TResult, TName>): event is ToolResultEvent<TResult, TPreliminaryResults, TName>;
+/**
+ * Type guard to check if an event is a tool call output event
+ */
+export declare function isToolCallOutputEvent(event: ResponseStreamEvent): event is ToolCallOutputEvent;
+/**
+ * Type guard to check if an event is a turn start event
+ */
+export declare function isTurnStartEvent(event: ResponseStreamEvent): event is TurnStartEvent;
+/**
+ * Type guard to check if an event is a turn end event
+ */
+export declare function isTurnEndEvent(event: ResponseStreamEvent): event is TurnEndEvent;
+/**
+ * Tool stream event types for getToolStream
+ * Includes both argument deltas and preliminary results
+ * @template TEvent - The event type from generator tools
+ * @template TName - Tool name (literal when known)
+ */
+export type ToolStreamEvent<TEvent = unknown, TName extends string = string> = {
+    type: 'delta';
+    content: string;
+} | {
+    type: 'preliminary_result';
+    toolCallId: string;
+    /**
+     * Optional for source compatibility with legacy hand-constructed
+     * events; {@link CorrelatedToolStreamEvent} re-requires it as a
+     * literal for a concrete tool.
+     */
+    toolName?: TName;
+    result: TEvent;
+};
+/**
+ * Name-correlated tool stream events for a concrete tools tuple.
+ * Checking `event.toolName` on a `preliminary_result` narrows `result`.
+ */
+export type CorrelatedToolStreamEvent<TTools extends readonly Tool[]> = {
+    type: 'delta';
+    content: string;
+} | CorrelatedToolStreamPreliminaryUnion<TTools>;
+/**
+ * Chat stream event types for getFullChatStream
+ * Includes content deltas, completion events, and tool preliminary results
+ * @template TEvent - The event type from generator tools
+ * @template TName - Tool name (literal when known)
+ */
+export type ChatStreamEvent<TEvent = unknown, TName extends string = string> = {
+    type: 'content.delta';
+    delta: string;
+} | {
+    type: 'message.complete';
+    response: models.OpenResponsesResult;
+} | {
+    type: 'tool.preliminary_result';
+    toolCallId: string;
+    /**
+     * Optional for source compatibility with legacy hand-constructed
+     * events that predate this field.
+     */
+    toolName?: TName;
+    result: TEvent;
+} | {
+    type: string;
+    event: StreamEvents;
+};
+/**
+ * Result of a tool execution that hasn't been sent to the model yet
+ * Used for interrupted or awaiting approval states
+ * @template TTools - The tools array type for proper type inference
+ */
+export interface UnsentToolResult<TTools extends readonly Tool[] = readonly Tool[]> {
+    /** The ID of the tool call this result is for */
+    callId: string;
+    /** The name of the tool that was executed (client tools only) */
+    name: Extract<TTools[number], {
+        function: {
+            name: string;
+        };
+    }> extends {
+        function: {
+            name: infer N;
+        };
+    } ? N : string;
+    /** The output of the tool execution */
+    output: unknown;
+    /** Error message if the tool call was rejected or failed */
+    error?: string;
+}
+/**
+ * Partial response captured during interruption
+ * @template TTools - The tools array type for proper type inference
+ */
+export interface PartialResponse<TTools extends readonly Tool[] = readonly Tool[]> {
+    /** Partial text response accumulated before interruption */
+    text?: string;
+    /** Tool calls that were in progress when interrupted */
+    toolCalls?: Array<ParsedToolCall<TTools[number]>>;
+}
+/**
+ * Status of a conversation state.
+ *
+ * - `in_progress`: conversation is actively executing
+ * - `complete`: conversation finished successfully
+ * - `interrupted`: execution was externally interrupted
+ * - `awaiting_approval`: tool calls are waiting for caller to approve/reject
+ * - `awaiting_hitl`: one or more HITL tools returned `null` from `onToolCalled`,
+ *   pausing execution so the caller can supply outputs for the paused calls
+ *   before resuming
+ * - `awaiting_client_tools`: one or more manual (`execute: false` / no execute
+ *   fn) tool calls are unresolved; the loop stopped so the caller can execute
+ *   them client-side and continue. Distinct from `awaiting_hitl` — HITL tools
+ *   have an `onToolCalled` hook; manual tools do not.
+ * - `awaiting_async_tools`: one or more deferred tools (`tool.deferred`)
+ *   started a durable external task; the loop paused until the task is
+ *   resolved via the tool's `.resolve()` / `.fail()` / `.cancel()` methods
+ *   (or `resumeToolResults()`), possibly from a different process. Distinct
+ *   from `awaiting_client_tools` — the tool DID execute (its `start` ran and
+ *   a placeholder output was persisted); only its final result is pending.
+ */
+export type ConversationStatus = 'complete' | 'interrupted' | 'awaiting_approval' | 'awaiting_hitl' | 'awaiting_client_tools' | 'awaiting_async_tools' | 'in_progress';
+export type { ToolTaskStatus } from './tool-task.js';
+/**
+ * A pending (or settled) async tool task tracked on
+ * {@link ConversationState.pendingAsyncTools}. One entry per background /
+ * deferred call that produced a placeholder output.
+ */
+export interface PendingAsyncTool {
+    /** The originating `function_call`'s call id. */
+    callId: string;
+    /** Durable task id (deferred: caller-supplied; background/agent: generated). */
+    taskId: string;
+    /** The tool's name. */
+    name: string;
+    /** How the task escapes the round. */
+    mode: ToolTaskMode;
+    /** Current lifecycle status (MCP-Tasks-compatible vocabulary). */
+    status: ToolTaskStatus;
+    /** Unix ms when the task started. */
+    startedAt: number;
+    /** Unix ms after which the task is considered expired. */
+    expiresAt?: number;
+    /** Poll-interval hint surfaced to the model and external pollers. */
+    pollAfterMs?: number;
+    /**
+     * Set on a background task left running when the run ended under
+     * `onRunEnd: 'detach'` — its result will never be delivered.
+     */
+    orphaned?: boolean;
+    /**
+     * The most recent log entry, truncated (~200 chars) — the one piece of
+     * progress that survives a process restart. Additive within
+     * ConversationState version 1.
+     */
+    lastLog?: {
+        at: number;
+        text: string;
+    };
+}
+/**
+ * State for multi-turn conversations with persistence and approval gates
+ * @template TTools - The tools array type for proper type inference
+ */
+export interface ConversationState<TTools extends readonly Tool[] = readonly Tool[]> {
+    /**
+     * Serialization-contract version for this state blob.
+     *
+     * Optional so legacy (pre-version-field) states remain assignable. Absence is
+     * treated as version `1` by {@link deserializeConversationState}. Consumers
+     * should treat serialized JSON as opaque: additive fields within a major
+     * version, migrations applied inside `deserializeConversationState` on bump.
+     */
+    version?: number;
+    /** Unique identifier for this conversation */
+    id: string;
+    /** Full message history */
+    messages: models.InputsUnion;
+    /** Previous response ID for chaining (OpenRouter server-side optimization) */
+    previousResponseId?: string;
+    /**
+     * RFC 8785 canonical key of the forced `toolChoice` most recently consumed
+     * by the active logical run. Persisted across approval, HITL, client-tool,
+     * and async-tool pauses so an unchanged forced choice stays relaxed after
+     * resume while a newly resolved forced value can re-arm.
+     *
+     * Cleared after an unforced caller choice is successfully dispatched or the
+     * run reaches a terminal exit.
+     */
+    consumedForcedToolChoiceKey?: string;
+    /** Tool calls awaiting human approval */
+    pendingToolCalls?: Array<PendingToolCall<TTools[number]>>;
+    /** Tool results executed but not yet sent to the model */
+    unsentToolResults?: Array<UnsentToolResult<TTools>>;
+    /** Partial response data captured during interruption */
+    partialResponse?: PartialResponse<TTools>;
+    /** Signal from a new request to interrupt this conversation */
+    interruptedBy?: string;
+    /**
+     * Doom-loop detector state (see the `doomLoop` option on `callModel`).
+     * Bounded plain JSON, persisted so repetition streaks survive
+     * serialize → resume. Absent when detection is off. Additive within
+     * ConversationState version 1.
+     */
+    doomLoop?: DoomLoopSerializedState;
+    /**
+     * Async tool tasks (background / deferred) whose placeholder output was
+     * sent to the model but whose real result has not been delivered yet.
+     * Additive within ConversationState version 1.
+     */
+    pendingAsyncTools?: PendingAsyncTool[];
+    /**
+     * Call ids whose async result has already been delivered — the
+     * at-most-once guard against replayed webhook resolutions. Additive
+     * within ConversationState version 1.
+     */
+    settledAsyncCallIds?: string[];
+    /** Current status of the conversation */
+    status: ConversationStatus;
+    /** Creation timestamp (Unix ms) */
+    createdAt: number;
+    /** Last update timestamp (Unix ms) */
+    updatedAt: number;
+}
+/**
+ * State accessor for loading and saving conversation state
+ * Enables any storage backend (memory, Redis, database, etc.)
+ * @template TTools - The tools array type for proper type inference
+ */
+export interface StateAccessor<TTools extends readonly Tool[] = readonly Tool[]> {
+    /** Load the current conversation state, or null if none exists */
+    load: () => Promise<ConversationState<TTools> | null>;
+    /** Save the conversation state */
+    save: (state: ConversationState<TTools>) => Promise<void>;
+}
+/**
+ * Check if a single tool has approval configured (non-false, non-undefined)
+ * Returns true if the tool definitely requires approval,
+ * false if it definitely doesn't, or boolean if it's uncertain
+ */
+export type ToolHasApproval<T extends Tool> = T extends {
+    function: {
+        requireApproval: true | ToolApprovalCheck<unknown>;
+    };
+} ? true : T extends {
+    function: {
+        requireApproval: false;
+    };
+} ? false : T extends {
+    function: {
+        requireApproval: undefined;
+    };
+} ? false : boolean;
+/**
+ * Check if ANY tool in an array has approval configured
+ * Returns true if at least one tool might require approval
+ */
+export type HasApprovalTools<TTools extends readonly Tool[]> = TTools extends readonly [
+    infer First extends Tool,
+    ...infer Rest extends Tool[]
+] ? ToolHasApproval<First> extends true ? true : HasApprovalTools<Rest> : false;
+/**
+ * Type guard to check if a tool has approval configured at runtime
+ */
+export declare function toolHasApprovalConfigured(tool: Tool): boolean;
+/**
+ * Type guard to check if any tools in array have approval configured at runtime
+ */
+export declare function hasApprovalRequiredTools(tools: readonly Tool[]): boolean;
+//# sourceMappingURL=tool-types.d.ts.map
