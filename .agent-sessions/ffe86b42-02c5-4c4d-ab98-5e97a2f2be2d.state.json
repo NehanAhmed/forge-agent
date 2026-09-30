@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "id": "conv_982ae1e3-6472-4a81-8124-cadc6349c021",
+  "messages": [
+    {
+      "role": "user",
+      "content": "hey"
+    },
+    {
+      "content": [
+        {
+          "text": "User says \"hey\". Should respond with a greeting.",
+          "type": "reasoning_text"
+        }
+      ],
+      "id": "rs_tmp_8rtf1zdvxhv",
+      "status": "completed",
+      "summary": [],
+      "type": "reasoning",
+      "format": "unknown"
+    },
+    {
+      "content": [
+        {
+          "annotations": [],
+          "logprobs": [],
+          "text": "Hey! How can I help you today?",
+          "type": "output_text"
+        }
+      ],
+      "id": "msg_tmp_tgxhpalm81",
+      "role": "assistant",
+      "status": "completed",
+      "type": "message"
+    }
+  ],
+  "status": "complete",
+  "createdAt": 1789799627976,
+  "updatedAt": 1789799692071,
+  "previousResponseId": "gen-1789799628-IhHVufrwmdEG2A8gKxof"
+}

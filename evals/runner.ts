@@ -1,9 +1,12 @@
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
-import { runAgent } from '../agent-cli.js';
-import type { Message } from '../session.js';
-import { SYSTEM_PROMPT } from '../constant.js';
+import { fileURLToPath } from 'url';
+import { runAgent } from '../dist/cli/agent-cli.js';
+import { stateToMessages } from '../dist/core/state.js';
+import { SYSTEM_PROMPT } from '../dist/core/constants.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 type Check =
   | { type: 'tool_was_called'; tool: string; minTimes?: number }
@@ -20,17 +23,17 @@ type EvalCase = {
   checks: Check[];
 };
 
-function countToolCalls(messages: Message[], toolName: string): number {
+function countToolCalls(messages: Array<{ role: string; toolCalls?: unknown[] }>, toolName: string): number {
   return messages
     .filter(m => m.role === 'assistant' && m.toolCalls)
     .flatMap(m => m.toolCalls!)
-    .filter(tc => tc.function.name === toolName)
+    .filter((tc: any) => tc.function?.name === toolName)
     .length;
 }
 
 function runCheck(
   check: Check,
-  messages: Message[],
+  messages: Array<{ role: string; content: string | null; toolCalls?: unknown[] }>,
   cwd: string,
   confirmCallCount: number
 ): { pass: boolean; detail: string } {
@@ -69,7 +72,7 @@ function runCheck(
 }
 
 function prepareScratchDir(evalCaseId: string): string {
-  const scratchDir = path.join(import.meta.dirname, 'scratch', evalCaseId);
+  const scratchDir = path.join(__dirname, 'scratch', evalCaseId);
   fs.rmSync(scratchDir, { recursive: true, force: true });
   fs.mkdirSync(scratchDir, { recursive: true });
   return scratchDir;
@@ -82,19 +85,21 @@ async function runEval(evalCase: EvalCase) {
 
   let confirmCallCount = 0;
   const sessionId = `eval-${evalCase.id}-${Date.now()}`;
-  const messages: Message[] = [
+  const messages: Array<{ role: string; content: string }> = [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: evalCase.prompt },
   ];
 
   try {
-    const finalMessages = await runAgent(sessionId, messages, {
+    const finalState = await runAgent(sessionId, evalCase.prompt, {
       onLog: () => {},
       onConfirm: async () => {
         confirmCallCount++;
         return true;
       },
     });
+
+    const finalMessages = stateToMessages(finalState);
 
     const results = evalCase.checks.map(check => ({
       check,
@@ -109,12 +114,12 @@ async function runEval(evalCase: EvalCase) {
 }
 
 async function main() {
-  const caseFiles = fs.readdirSync(path.join(import.meta.dirname, 'cases'));
+  const caseFiles = fs.readdirSync(path.join(__dirname, 'cases'));
   const summary: any[] = [];
 
   for (const file of caseFiles) {
     const evalCase: EvalCase = JSON.parse(
-      fs.readFileSync(path.join(import.meta.dirname, 'cases', file), 'utf-8')
+      fs.readFileSync(path.join(__dirname, 'cases', file), 'utf-8')
     );
     console.log(`Running: ${evalCase.id}`);
 
@@ -136,9 +141,9 @@ async function main() {
   const erroredCount = summary.filter(s => s.errored).length;
   console.log(`\n${passCount}/${summary.length} passed${erroredCount ? ` (${erroredCount} errored)` : ''}`);
 
-  fs.mkdirSync(path.join(import.meta.dirname, 'results'), { recursive: true });
+  fs.mkdirSync(path.join(__dirname, 'results'), { recursive: true });
   fs.writeFileSync(
-    path.join(import.meta.dirname, 'results', `run-${Date.now()}.json`),
+    path.join(__dirname, 'results', `run-${Date.now()}.json`),
     JSON.stringify(summary, null, 2)
   );
 }

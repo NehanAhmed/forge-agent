@@ -2,7 +2,7 @@
   "name": "pulse-cli",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "dist/index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "tsc",
@@ -10,7 +10,7 @@
     "eval": "tsx evals/runner.ts"
   },
   "bin": {
-    "pulseexit": "./dist/App.js"
+    "pulse": "./dist/cli/app.js"
   },
   "keywords": [],
   "author": "",
@@ -27,7 +27,8 @@
     "ink-text-input": "^6.0.0",
     "react": "^19.2.8",
     "tsx": "^4.23.12",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

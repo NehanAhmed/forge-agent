@@ -1,3 +1,4 @@
 .env
 evals/results/
 evals/scratch/
+node_modules
