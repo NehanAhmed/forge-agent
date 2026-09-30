@@ -2,3 +2,6 @@
 evals/results/
 evals/scratch/
 node_modules
+dist
+test-fixtures
+evals

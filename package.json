@@ -1,7 +1,8 @@
 {
-  "name": "forge",
-  "version": "1.0.0",
-  "description": "",
+  "name": "@nehanahmed/forge",
+  "version": "0.1.0",
+  "description": "A Terminal-based AI agent that can perform tasks and interact with the user.",
+  "license": "MIT",
   "main": "dist/index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -13,9 +14,26 @@
   "bin": {
     "forge": "./dist/cli/app.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "cli",
+    "coding-agent",
+    "mutli-model"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NehanAhmed/forge-agent.git"
+  },
+  "author": "Nehan Ahmed",
+  "files": [
+    "dist",
+    "README.MD",
+    "LICENSE"
+  ],
   "type": "module",
   "dependencies": {
     "@openrouter/agent": "^0.11.0",
