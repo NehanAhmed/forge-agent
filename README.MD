@@ -1,5 +1,6 @@
 # Forge
-[![npm](https://img.shields.io/npm/v/@yourusername/forge)](https://www.npmjs.com/package/@yourusername/forge)
+[![npm](https://img.shields.io/npm/v/@nehanahmed/forge)](https://www.npmjs.com/package/@nehanahmed/forge)
+\n
 Forge is a terminal-based AI coding agent that works in your current project directory. It can inspect and search a codebase, run shell commands, edit files, and delegate read-only investigations to a sub-agent. Risky actions require your confirmation.
 
 Forge uses OpenRouter and saves conversation sessions locally so you can resume work later.
