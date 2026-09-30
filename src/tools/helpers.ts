@@ -1,3 +1,5 @@
+import path from "path";
+
 type RgEvent = {
   type: 'begin' | 'match' | 'context' | 'end' | 'summary';
   data?: {
@@ -7,7 +9,18 @@ type RgEvent = {
     submatches?: unknown[];
   };
 };
+export function deriveSessionTitle(firstMessage: string): string {
+  const cleaned = firstMessage.trim().replace(/\s+/g, ' ');
+  return cleaned.length > 50 ? cleaned.slice(0, 50) + '…' : cleaned;
+}
 
+export function resolveSafePath(inputPath: string, cwd: string = process.cwd()): string {
+  const resolved = path.resolve(cwd, inputPath);
+  if (!resolved.startsWith(path.resolve(cwd) + path.sep) && resolved !== path.resolve(cwd)) {
+    throw new Error(`Path "${inputPath}" resolves outside the working directory and is not allowed.`);
+  }
+  return resolved;
+}
 export const formatRgOutput = (output: string, maxTotalMatches = 60): string => {
   const lines = output.trim().split('\n').filter(Boolean);
   const fileGroups = new Map<string, { lineNumber: number; text: string; isMatch: boolean }[]>();

@@ -23,6 +23,7 @@ export type LogEvent = {
 export type Callbacks = {
     onLog: (event: LogEvent) => void;
     onConfirm: (description: string) => Promise<boolean>;
+    onUsage: (inputTokens: number, outputTokens: number, cost: number | undefined) => void;
 };
 export declare function runAgent(sessionId: string, userMessage: string, callbacks: Callbacks): Promise<ConversationState>;
 //# sourceMappingURL=agent-cli.d.ts.map

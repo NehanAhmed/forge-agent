@@ -1,16 +1,17 @@
 {
-  "name": "pulse-cli",
+  "name": "forge",
   "version": "1.0.0",
   "description": "",
   "main": "dist/index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "tsc",
+    "build": "tsc && npm run postbuild",
+    "postbuild": "node ./scripts/add-shebang.js",
     "prepare": "npm run build",
     "eval": "tsx evals/runner.ts"
   },
   "bin": {
-    "pulse": "./dist/cli/app.js"
+    "forge": "./dist/cli/app.js"
   },
   "keywords": [],
   "author": "",
@@ -18,7 +19,6 @@
   "type": "module",
   "dependencies": {
     "@openrouter/agent": "^0.11.0",
-    "@openrouter/sdk": "^1.2.51",
     "dotenv": "^17.4.2",
     "ink": "^7.1.1",
     "ink-big-text": "^2.0.0",

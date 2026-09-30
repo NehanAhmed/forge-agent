@@ -1,3 +1,15 @@
+import path from "path";
+export function deriveSessionTitle(firstMessage) {
+    const cleaned = firstMessage.trim().replace(/\s+/g, ' ');
+    return cleaned.length > 50 ? cleaned.slice(0, 50) + '…' : cleaned;
+}
+export function resolveSafePath(inputPath, cwd = process.cwd()) {
+    const resolved = path.resolve(cwd, inputPath);
+    if (!resolved.startsWith(path.resolve(cwd) + path.sep) && resolved !== path.resolve(cwd)) {
+        throw new Error(`Path "${inputPath}" resolves outside the working directory and is not allowed.`);
+    }
+    return resolved;
+}
 export const formatRgOutput = (output, maxTotalMatches = 60) => {
     const lines = output.trim().split('\n').filter(Boolean);
     const fileGroups = new Map();

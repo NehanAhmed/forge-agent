@@ -2,13 +2,18 @@ import fs from 'fs';
 import { execFileSync, execSync } from 'child_process';
 import { createTools } from './definitions.js';
 import { MODEL, SUBAGENT_MAX_ITERATIONS, SUBAGENT_TOOLS, SYSTEM_PROMPT } from '../core/constants.js';
-import { client } from '../core/client.js';
-import { formatRgOutput } from './helpers.js';
+import { getClient } from '../core/client.js';
+import { formatRgOutput, resolveSafePath } from './helpers.js';
 import { stepCountIs } from '@openrouter/agent';
 
 export function runBash(command: string): string {
+  // NOTE: run_bash is NOT path-sandboxed — a shell command can `cd`, use
+  // absolute paths, or chain commands in ways resolveSafePath can't
+  // intercept. It stays a RISKY_TOOL requiring confirmation; true sandboxing
+  // would need a real subprocess jail (e.g. a restricted PATH/cwd + denylist
+  // of dangerous patterns), which is a separate, bigger piece of work.
   try {
-    return execSync(command, { encoding: 'utf-8', timeout: 10_000 });
+    return execSync(command, { encoding: 'utf-8', timeout: 10_000, cwd: process.cwd() });
   } catch (err: any) {
     return `ERROR: ${err.stdout ?? ''}${err.stderr ?? err.message}`;
   }
@@ -16,7 +21,8 @@ export function runBash(command: string): string {
 
 export function readFile(path: string): string {
   try {
-    return fs.readFileSync(path, 'utf-8');
+    const safePath = resolveSafePath(path);
+    return fs.readFileSync(safePath, 'utf-8');
   } catch (err: any) {
     return `ERROR: ${err.message}`;
   }
@@ -24,7 +30,8 @@ export function readFile(path: string): string {
 
 export function writeFile(path: string, content: string): string {
   try {
-    fs.writeFileSync(path, content, 'utf-8');
+    const safePath = resolveSafePath(path);
+    fs.writeFileSync(safePath, content, 'utf-8');
     return `File written successfully to ${path}`;
   } catch (err: any) {
     return `ERROR: ${err.message}`;
@@ -33,28 +40,26 @@ export function writeFile(path: string, content: string): string {
 
 export function editFile(path: string, oldContent: string, newContent: string): string {
   try {
-    const content = fs.readFileSync(path, 'utf-8');
+    const safePath = resolveSafePath(path);
+    const content = fs.readFileSync(safePath, 'utf-8');
     const occurences = content.split(oldContent).length - 1;
     if (occurences === 0) {
       return `ERROR: The string "${oldContent}" was not found in the file.`;
     }
     const updatedContent = content.replace(oldContent, newContent);
-    fs.writeFileSync(path, updatedContent, 'utf-8');
+    fs.writeFileSync(safePath, updatedContent, 'utf-8');
     return `Successfully replaced ${occurences} occurence(s) of "${oldContent}" with "${newContent}" in ${path}`;
   } catch (err: any) {
     return `ERROR: ${err.message}`;
   }
-
 }
 
 export async function spawnSubAgent(task: string): Promise<string> {
-  const MAX_ITERATIONS = 10;
-  let iterations = 0;
   const readOnlyTools = createTools(async () => false)
     .filter(t => SUBAGENT_TOOLS.includes(t.function.name));
   let result;
   try {
-    result = client.callModel({
+    result = getClient().callModel({
       model: MODEL,
       instructions: SYSTEM_PROMPT,
       input: task,
@@ -69,12 +74,17 @@ export async function spawnSubAgent(task: string): Promise<string> {
   } catch (err: any) {
     return `ERROR: sub-agent stream failed — ${err?.error?.message ?? err?.message ?? String(err)}`;
   }
-
 }
 
 export function searchCodebase(pattern: string, path: string = '.', maxResults: number = 60): string {
-  const resolvedPath = path && path.trim() ? path : '.';
+  const inputPath = path && path.trim() ? path : '.';
   const cappedMax = Math.min(maxResults, 150);
+  let resolvedPath: string;
+  try {
+    resolvedPath = resolveSafePath(inputPath);
+  } catch (err: any) {
+    return `ERROR: ${err.message}`;
+  }
   try {
     const output = execFileSync(
       'rg',
@@ -95,6 +105,7 @@ export function searchCodebase(pattern: string, path: string = '.', maxResults: 
     return `ERROR: ${err.stderr ?? err.message}`;
   }
 }
+
 export const toolExecutors: Record<string, (args: any) => string | Promise<string>> = {
   run_bash: (args) => runBash(args.command),
   read_file: (args) => readFile(args.path),

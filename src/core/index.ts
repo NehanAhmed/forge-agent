@@ -1,4 +1,4 @@
-export { client } from './client.js';
+export { getClient } from './client.js';
 export {
   AGENT_NAME,
   MODEL,

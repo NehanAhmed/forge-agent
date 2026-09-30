@@ -1,5 +1,5 @@
 import { MODEL, COMPACTION_THRESHOLD_TOKENS, COMPACTION_KEEP_RECENT, SYSTEM_PROMPT } from './constants.js';
-import { client } from './client.js';
+import { getClient } from './client.js';
 export const DEFAULT_COMPACTION_CONFIG = {
     thresholdTokens: COMPACTION_THRESHOLD_TOKENS,
     keepRecentTurns: COMPACTION_KEEP_RECENT,
@@ -121,7 +121,7 @@ export async function compactIfNeeded(state, config = DEFAULT_COMPACTION_CONFIG)
         return state;
     console.log(`[compaction] compacting ${toSummarize.length} messages...`);
     try {
-        const summaryResponse = await client.callModel({
+        const summaryResponse = await getClient().callModel({
             model: config.model,
             input: [
                 {

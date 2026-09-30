@@ -1,5 +1,5 @@
 import { MODEL, COMPACTION_THRESHOLD_TOKENS, COMPACTION_KEEP_RECENT, SYSTEM_PROMPT } from './constants.js';
-import { client } from './client.js';
+import { getClient } from './client.js';
 import type { ConversationState } from '@openrouter/agent';
 
 export interface CompactionConfig {
@@ -172,7 +172,7 @@ export async function compactIfNeeded(
   console.log(`[compaction] compacting ${toSummarize.length} messages...`);
 
   try {
-    const summaryResponse = await client.callModel({
+    const summaryResponse = await getClient().callModel({
       model: config.model,
       input: [
         {

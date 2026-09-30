@@ -1,6 +1,9 @@
+#!/usr/bin/env node
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-// App.tsx
 import 'dotenv/config';
+import path from 'path';
+import os from 'os';
+import fs from 'fs';
 import React, { useState, useRef } from 'react';
 import { render, Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
@@ -9,10 +12,25 @@ import Gradient from 'ink-gradient';
 import { randomUUID } from 'crypto';
 import { runAgent } from './agent-cli.js';
 import { MODEL, AGENT_NAME } from '../core/constants.js';
-import { getLatestSessionId } from '../core/index.js';
+import { getLatestSessionId, listSessions } from '../core/index.js';
+import { listSessionMeta } from '../core/state.js';
+// --- config command: runs before anything else, exits early if matched ---
+const cliArgs = process.argv.slice(2);
+if (cliArgs[0] === 'config' && cliArgs[1] === 'set-key') {
+    const key = cliArgs[2];
+    if (!key) {
+        console.error('Usage: forge config set-key <your-api-key>');
+        process.exit(1);
+    }
+    const configDir = path.join(os.homedir(), '.forge');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'config.json'), JSON.stringify({ apiKey: key }, null, 2));
+    console.log('API key saved.');
+    process.exit(0);
+}
 let entryId = 0;
-function Header({ sessionId }) {
-    return (_jsx(Box, { flexDirection: "column", padding: 1, children: _jsxs(Box, { flexDirection: "column", marginBottom: 1, children: [_jsx(Gradient, { name: "pastel", children: _jsxs(Text, { bold: true, children: ["\u25B2 ", AGENT_NAME] }) }), _jsxs(Text, { dimColor: true, children: ["model: ", MODEL, " | session: ", sessionId.slice(0, 8)] })] }) }));
+function Header({ sessionId, title }) {
+    return (_jsx(Box, { flexDirection: "column", padding: 1, children: _jsxs(Box, { flexDirection: "column", marginBottom: 1, children: [_jsx(Gradient, { name: "pastel", children: _jsxs(Text, { bold: true, children: ["\u25B2 ", AGENT_NAME] }) }), _jsxs(Text, { dimColor: true, children: ["model: ", MODEL, " | session: ", sessionId.slice(0, 8)] }), _jsxs(Text, { dimColor: true, children: ["title: ", title || 'Unnamed', " | dir: ", process.cwd()] })] }) }));
 }
 function EntryLine({ entry }) {
     switch (entry.kind) {
@@ -40,7 +58,6 @@ function resolveSessionId() {
             : getLatestSessionId();
         if (targetId)
             return targetId;
-        // fall through to new session if no prior sessions exist
     }
     return randomUUID();
 }
@@ -52,6 +69,8 @@ function App() {
     const sessionIdRef = useRef(resolveSessionId());
     const sessionId = sessionIdRef.current;
     const [entries, setEntries] = useState([]);
+    const [usage, setUsage] = useState({ inputTokens: 0, outputTokens: 0, cost: 0 });
+    const [title, setTitle] = useState(null);
     function pushEntry(kind, text) {
         setEntries(prev => [...prev, { id: entryId++, kind, text }]);
     }
@@ -86,12 +105,41 @@ function App() {
     async function handleSubmit(value) {
         if (!value.trim() || isProcessing)
             return;
-        if (value.trim().toLowerCase() === 'exit') {
+        if (value.trim().toLowerCase() === '/exit') {
             process.exit(0);
+        }
+        if (value.trim().toLowerCase() === '/clear') {
+            setEntries([]);
+            setUsage({ inputTokens: 0, outputTokens: 0, cost: 0 });
+            setInput('');
+            return;
+        }
+        if (value.trim().toLowerCase() === '/new') {
+            sessionIdRef.current = randomUUID();
+            setEntries([]);
+            setUsage({ inputTokens: 0, outputTokens: 0, cost: 0 });
+            setInput('');
+            return;
+        }
+        if (value.trim().toLowerCase() === '/help') {
+            pushEntry('info', 'Available commands:\n/clear - Clear the chat history\n/help - Show this help message\n/exit - Exit the application');
+            setInput('');
+            return;
+        }
+        if (value.trim().toLowerCase() === '/sessions') {
+            const sessions = listSessionMeta().sort((a, b) => b.createdAt - a.createdAt);
+            const lines = sessions.map(s => `${s.title}  (${s.id.slice(0, 8)})`);
+            pushEntry('info', sessions.length ? `Sessions:\n${lines.join('\n')}` : 'No sessions yet.');
+            setInput('');
+            setTitle(sessions.find(s => s.id === sessionId)?.title ?? null);
+            return;
         }
         pushEntry('user', value);
         setInput('');
         setIsProcessing(true);
+        const usageLimit = (inputTokens, outputTokens, cost) => {
+            setUsage(prev => ({ ...prev, inputTokens: prev.inputTokens + inputTokens, outputTokens: prev.outputTokens + outputTokens, cost: prev.cost + (cost || 0) }));
+        };
         const onLog = (event) => {
             switch (event.type) {
                 case 'reasoning_delta':
@@ -117,10 +165,11 @@ function App() {
         await runAgent(sessionId, value, {
             onLog,
             onConfirm: handleConfirm,
+            onUsage: usageLimit,
         });
         setIsProcessing(false);
     }
-    return (_jsxs(Box, { flexDirection: "column", padding: 1, children: [_jsx(Header, { sessionId: sessionId }), _jsx(Box, { flexDirection: "column", children: entries.map(entry => (_jsx(EntryLine, { entry: entry }, entry.id))) }), pendingConfirm && (_jsxs(Box, { marginTop: 1, paddingX: 1, borderStyle: "round", borderColor: "red", children: [_jsx(Text, { color: "redBright", bold: true, children: '⚠ ' }), _jsxs(Text, { color: "red", children: ["Allow: ", pendingConfirm, "?  "] }), _jsx(Text, { dimColor: true, children: "(y/n)" })] })), !pendingConfirm && (_jsxs(Box, { marginTop: 1, paddingX: 1, borderStyle: "round", borderColor: isProcessing ? 'gray' : 'cyan', children: [_jsx(Text, { color: "cyanBright", bold: true, children: '❯ ' }), _jsx(TextInput, { value: input, onChange: setInput, onSubmit: handleSubmit, focus: !isProcessing })] })), isProcessing && (_jsxs(Box, { marginTop: 1, children: [_jsx(Text, { color: "cyan", children: _jsx(Spinner, { type: "dots" }) }), _jsx(Text, { dimColor: true, children: " thinking..." })] })), _jsx(Box, { marginTop: 1, children: _jsx(Text, { dimColor: true, children: "type \"exit\" to quit" }) })] }));
+    return (_jsxs(Box, { flexDirection: "column", padding: 1, children: [_jsx(Header, { sessionId: sessionId, title: title }), _jsx(Box, { flexDirection: "column", children: entries.map(entry => (_jsx(EntryLine, { entry: entry }, entry.id))) }), pendingConfirm && (_jsxs(Box, { marginTop: 1, paddingX: 1, borderStyle: "round", borderColor: "red", children: [_jsx(Text, { color: "redBright", bold: true, children: '⚠ ' }), _jsxs(Text, { color: "red", children: ["Allow: ", pendingConfirm, "?  "] }), _jsx(Text, { dimColor: true, children: "(y/n)" })] })), !pendingConfirm && (_jsxs(Box, { marginTop: 1, paddingX: 1, borderStyle: "round", borderColor: isProcessing ? 'gray' : 'cyan', children: [_jsx(Text, { color: "cyanBright", bold: true, children: '❯ ' }), _jsx(TextInput, { value: input, onChange: setInput, onSubmit: handleSubmit, focus: !isProcessing })] })), isProcessing && (_jsxs(Box, { marginTop: 1, children: [_jsx(Text, { color: "cyan", children: _jsx(Spinner, { type: "dots" }) }), _jsx(Text, { dimColor: true, children: " thinking..." })] })), _jsxs(Box, { marginTop: 1, children: [_jsx(Text, { dimColor: true, children: "type \"/exit\" to quit" }), _jsxs(Text, { dimColor: true, children: [" | Input tokens used: ", usage.inputTokens, " | Output tokens used: ", usage.outputTokens, " | estimated cost: $", usage.cost.toFixed(4)] })] })] }));
 }
 render(_jsx(App, {}));
 export { App };

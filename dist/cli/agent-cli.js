@@ -1,37 +1,23 @@
 #!/usr/bin/env node
 import { stepCountIs, createInitialState } from '@openrouter/agent';
 import { createTools } from '../tools/definitions.js';
-import { client } from '../core/client.js';
-import { MAX_ITERATIONS, MODEL, SYSTEM_PROMPT } from '../core/constants.js';
-import { createStateAccessor } from '../core/state.js';
+import { getClient } from '../core/client.js';
+import { buildSystemPrompt, MAX_ITERATIONS, MODEL, SYSTEM_PROMPT } from '../core/constants.js';
+import { createStateAccessor, saveSessionTitle } from '../core/state.js';
+import { deriveSessionTitle } from '../tools/helpers.js';
 function generateId() {
     return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 export async function runAgent(sessionId, userMessage, callbacks) {
     const tools = createTools(callbacks.onConfirm);
     const stateAccessor = createStateAccessor(sessionId);
-    let priorState = null;
-    try {
-        priorState = await stateAccessor.load();
-    }
-    catch {
-        priorState = null;
-    }
-    // Initialize state with system prompt if new session
-    if (!priorState) {
-        priorState = createInitialState(sessionId);
-        priorState.messages = [
-            {
-                id: generateId(),
-                role: 'system',
-                content: SYSTEM_PROMPT,
-            }
-        ];
-    }
+    const priorState = await stateAccessor.load();
+    const isNewSession = priorState === null;
     let result;
     try {
-        result = client.callModel({
+        result = getClient().callModel({
             model: MODEL,
+            instructions: buildSystemPrompt(process.cwd()),
             input: userMessage,
             tools,
             stopWhen: [stepCountIs(MAX_ITERATIONS)],
@@ -41,7 +27,13 @@ export async function runAgent(sessionId, userMessage, callbacks) {
     catch (err) {
         const errMsg = err?.error?.message ?? err?.message ?? String(err);
         callbacks.onLog({ type: 'info', content: `Model call failed: ${errMsg}` });
+        const fallbackState = await stateAccessor.load();
+        if (fallbackState)
+            return fallbackState;
         throw err;
+    }
+    if (isNewSession) {
+        saveSessionTitle(sessionId, deriveSessionTitle(userMessage));
     }
     const reasoningTask = (async () => {
         try {
@@ -73,6 +65,8 @@ export async function runAgent(sessionId, userMessage, callbacks) {
         const errMsg = err?.error?.message ?? err?.message ?? String(err);
         callbacks.onLog({ type: 'info', content: `Stream failed mid-response: ${errMsg}` });
     }
+    const finalUsage = await result.getUsage();
+    callbacks.onUsage(finalUsage.inputTokens, finalUsage.outputTokens, finalUsage.cost);
     await reasoningTask;
     await toolCallTask;
     const finalState = await stateAccessor.load();

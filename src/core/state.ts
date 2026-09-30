@@ -3,7 +3,16 @@ import path from 'path';
 import type { StateAccessor, ConversationState } from '@openrouter/agent';
 import type { Message } from '../types/index.js';
 import { compactIfNeeded, DEFAULT_COMPACTION_CONFIG } from './compaction.js';
+type SessionMetaEntry = { id: string; title: string; createdAt: number };
 
+const META_SESSION_DIR = path.join(process.cwd(), '.forge', 'meta');
+const ensureMetaDir = () => {
+  if (!fs.existsSync(META_SESSION_DIR)) {
+    fs.mkdirSync(META_SESSION_DIR, { recursive: true });
+  }
+};
+ensureMetaDir();
+const META_FILE = path.join(META_SESSION_DIR, 'meta.json');
 export type SessionSummary = {
   id: string;
   updatedAt: number;
@@ -152,3 +161,30 @@ export function stateToMessages(state: ConversationState): Message[] {
 }
 
 export { compactIfNeeded, DEFAULT_COMPACTION_CONFIG, type CompactionConfig } from './compaction.js';
+
+
+
+function readMeta(): SessionMetaEntry[] {
+  if (!fs.existsSync(META_FILE)) return [];
+  try {
+    return JSON.parse(fs.readFileSync(META_FILE, 'utf-8'));
+  } catch {
+    return [];
+  }
+}
+
+export function saveSessionTitle(sessionId: string, title: string) {
+  const meta = readMeta();
+  if (!meta.some(m => m.id === sessionId)) {
+    meta.push({ id: sessionId, title, createdAt: Date.now() });
+    fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2));
+  }
+}
+
+export function getSessionTitle(sessionId: string): string | null {
+  return readMeta().find(m => m.id === sessionId)?.title ?? null;
+}
+
+export function listSessionMeta(): SessionMetaEntry[] {
+  return readMeta();
+}

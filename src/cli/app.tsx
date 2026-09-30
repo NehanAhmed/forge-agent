@@ -1,5 +1,8 @@
-// App.tsx
+#!/usr/bin/env node
 import 'dotenv/config';
+import path from 'path';
+import os from 'os';
+import fs from 'fs';
 import React, { useState, useRef } from 'react';
 import { render, Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
@@ -7,9 +10,27 @@ import Spinner from 'ink-spinner';
 import Gradient from 'ink-gradient';
 import { randomUUID } from 'crypto';
 import { runAgent, type LogEvent } from './agent-cli.js';
-
 import { MODEL, AGENT_NAME } from '../core/constants.js';
-import { getLatestSessionId } from '../core/index.js';
+import { getLatestSessionId, listSessions } from '../core/index.js';
+import { listSessionMeta } from '../core/state.js';
+
+// --- config command: runs before anything else, exits early if matched ---
+const cliArgs = process.argv.slice(2);
+if (cliArgs[0] === 'config' && cliArgs[1] === 'set-key') {
+  const key = cliArgs[2];
+  if (!key) {
+    console.error('Usage: forge config set-key <your-api-key>');
+    process.exit(1);
+  }
+  const configDir = path.join(os.homedir(), '.forge');
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(configDir, 'config.json'),
+    JSON.stringify({ apiKey: key }, null, 2)
+  );
+  console.log('API key saved.');
+  process.exit(0);
+}
 
 type DisplayEntry = {
   id: number;
@@ -19,7 +40,7 @@ type DisplayEntry = {
 
 let entryId = 0;
 
-function Header({ sessionId }: { sessionId: string }) {
+function Header({ sessionId, title }: { sessionId: string; title: string | null }) {
   return (
     <Box flexDirection="column" padding={1}>
       <Box flexDirection="column" marginBottom={1}>
@@ -27,6 +48,7 @@ function Header({ sessionId }: { sessionId: string }) {
           <Text bold>▲ {AGENT_NAME}</Text>
         </Gradient>
         <Text dimColor>model: {MODEL} | session: {sessionId.slice(0, 8)}</Text>
+        <Text dimColor>title: {title || 'Unnamed'} | dir: {process.cwd()}</Text>
       </Box>
     </Box>
   );
@@ -89,7 +111,6 @@ function resolveSessionId(): string {
       : getLatestSessionId();
 
     if (targetId) return targetId;
-    // fall through to new session if no prior sessions exist
   }
 
   return randomUUID();
@@ -103,6 +124,8 @@ function App() {
   const sessionIdRef = useRef<string>(resolveSessionId());
   const sessionId = sessionIdRef.current;
   const [entries, setEntries] = useState<DisplayEntry[]>([]);
+  const [usage, setUsage] = useState<{ inputTokens: number; outputTokens: number; cost: number }>({ inputTokens: 0, outputTokens: 0, cost: 0 });
+  const [title, setTitle] = useState<string | null>(null);
 
   function pushEntry(kind: DisplayEntry['kind'], text: string) {
     setEntries(prev => [...prev, { id: entryId++, kind, text }]);
@@ -140,13 +163,43 @@ function App() {
 
   async function handleSubmit(value: string) {
     if (!value.trim() || isProcessing) return;
-    if (value.trim().toLowerCase() === 'exit') {
+    if (value.trim().toLowerCase() === '/exit') {
       process.exit(0);
+    }
+    if (value.trim().toLowerCase() === '/clear') {
+      setEntries([]);
+      setUsage({ inputTokens: 0, outputTokens: 0, cost: 0 });
+      setInput('');
+      return;
+    }
+    if (value.trim().toLowerCase() === '/new') {
+      sessionIdRef.current = randomUUID();
+      setEntries([]);
+      setUsage({ inputTokens: 0, outputTokens: 0, cost: 0 });
+      setInput('');
+      return;
+    }
+    if (value.trim().toLowerCase() === '/help') {
+      pushEntry('info', 'Available commands:\n/clear - Clear the chat history\n/help - Show this help message\n/exit - Exit the application');
+      setInput('');
+      return;
+    }
+    if (value.trim().toLowerCase() === '/sessions') {
+      const sessions = listSessionMeta().sort((a, b) => b.createdAt - a.createdAt);
+      const lines = sessions.map(s => `${s.title}  (${s.id.slice(0, 8)})`);
+      pushEntry('info', sessions.length ? `Sessions:\n${lines.join('\n')}` : 'No sessions yet.');
+      setInput('');
+      setTitle(sessions.find(s => s.id === sessionId)?.title ?? null);
+      return;
     }
 
     pushEntry('user', value);
     setInput('');
     setIsProcessing(true);
+
+    const usageLimit = (inputTokens: number, outputTokens: number, cost: number | undefined) => {
+      setUsage(prev => ({ ...prev, inputTokens: prev.inputTokens + inputTokens, outputTokens: prev.outputTokens + outputTokens, cost: prev.cost + (cost || 0) }));
+    };
 
     const onLog = (event: LogEvent) => {
       switch (event.type) {
@@ -174,6 +227,7 @@ function App() {
     await runAgent(sessionId, value, {
       onLog,
       onConfirm: handleConfirm,
+      onUsage: usageLimit,
     });
 
     setIsProcessing(false);
@@ -181,7 +235,7 @@ function App() {
 
   return (
     <Box flexDirection="column" padding={1}>
-      <Header sessionId={sessionId} />
+      <Header sessionId={sessionId} title={title} />
       <Box flexDirection="column">
         {entries.map(entry => (
           <EntryLine key={entry.id} entry={entry} />
@@ -209,7 +263,8 @@ function App() {
         </Box>
       )}
       <Box marginTop={1}>
-        <Text dimColor>type "exit" to quit</Text>
+        <Text dimColor>type "/exit" to quit</Text>
+        <Text dimColor> | Input tokens used: {usage.inputTokens} | Output tokens used: {usage.outputTokens} | estimated cost: ${usage.cost.toFixed(4)}</Text>
       </Box>
     </Box>
   );

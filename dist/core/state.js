@@ -1,6 +1,14 @@
 import fs from 'fs';
 import path from 'path';
 import { compactIfNeeded, DEFAULT_COMPACTION_CONFIG } from './compaction.js';
+const META_SESSION_DIR = path.join(process.cwd(), '.forge', 'meta');
+const ensureMetaDir = () => {
+    if (!fs.existsSync(META_SESSION_DIR)) {
+        fs.mkdirSync(META_SESSION_DIR, { recursive: true });
+    }
+};
+ensureMetaDir();
+const META_FILE = path.join(META_SESSION_DIR, 'meta.json');
 const SESSIONS_DIR = path.join(process.cwd(), '.agent-sessions');
 function ensureDir() {
     if (!fs.existsSync(SESSIONS_DIR)) {
@@ -119,4 +127,27 @@ export function stateToMessages(state) {
     return messages;
 }
 export { compactIfNeeded, DEFAULT_COMPACTION_CONFIG } from './compaction.js';
+function readMeta() {
+    if (!fs.existsSync(META_FILE))
+        return [];
+    try {
+        return JSON.parse(fs.readFileSync(META_FILE, 'utf-8'));
+    }
+    catch {
+        return [];
+    }
+}
+export function saveSessionTitle(sessionId, title) {
+    const meta = readMeta();
+    if (!meta.some(m => m.id === sessionId)) {
+        meta.push({ id: sessionId, title, createdAt: Date.now() });
+        fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2));
+    }
+}
+export function getSessionTitle(sessionId) {
+    return readMeta().find(m => m.id === sessionId)?.title ?? null;
+}
+export function listSessionMeta() {
+    return readMeta();
+}
 //# sourceMappingURL=state.js.map
