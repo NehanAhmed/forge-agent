@@ -1,6 +1,6 @@
 {
   "name": "@nehanahmed/forge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A Terminal-based AI agent that can perform tasks and interact with the user.",
   "license": "MIT",
   "main": "dist/index.js",
