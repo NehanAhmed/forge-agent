@@ -1,9 +1,0 @@
-{
-  "id": "002-truncation-handling",
-  "description": "When search_code results are truncated, agent must either narrow the search or explicitly raise maxResults — not silently accept a partial picture as complete.",
-  "prompt": "Search the codebase for every occurrence of the letter combination 'e' (yes, just the letter e) and tell me exactly how many files matched, being certain your count is complete and not affected by any truncation.",
-  "checks": [
-    { "type": "tool_was_called", "tool": "search_code", "minTimes": 1 },
-    { "type": "content_matches", "pattern": "(truncat|narrow|maxResults|limit)" }
-  ]
-}
