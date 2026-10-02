@@ -1,5 +1,7 @@
 # Forge [![npm](https://img.shields.io/npm/v/@nehanahmed/forge)](https://www.npmjs.com/package/@nehanahmed/forge)
-Forge is a terminal-based AI coding agent that works in your current project directory. It can inspect and search a codebase, run shell commands, edit files, and delegate read-only investigations to a sub-agent. Risky actions require your confirmation.
+Forge is a terminal-based AI coding agent that works in your current project directory. It can inspect and search a codebase, run shell commands, edit files, and delegate read-only investigations to a read-only sub-agent.
+
+![Forge](https://forge.nehan.site/opengraph-image)
 
 Forge uses OpenRouter and saves conversation sessions locally so you can resume work later.
 
@@ -96,7 +98,7 @@ Shell commands run with your operating-system permissions and are not sandboxed.
 
 ## Local data
 
-Conversation state is stored in `.agent-sessions/` under the working directory. Session titles and metadata are stored in `.forge/meta/` under that directory. The API key saved by `forge config set-key` is stored separately in `~/.forge/config.json`.
+Conversation state is stored in `.agent-sessions/` under the working directory. Session titles and metadata are stored in `.forge/meta/` under that directory. The API key saved by `forge config set-key` is saved in `~/.forge/config.json`.
 
 ## Development
 
