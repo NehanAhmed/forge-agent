@@ -1,7 +1,7 @@
 # Forge [![npm](https://img.shields.io/npm/v/@nehanahmed/forge)](https://www.npmjs.com/package/@nehanahmed/forge)
 Forge is a terminal-based AI coding agent that works in your current project directory. It can inspect and search a codebase, run shell commands, edit files, and delegate read-only investigations to a read-only sub-agent.
 
-![Forge](https://forge.nehan.site/opengraph-image)
+![Forge](./public/opengraph-image.png)
 
 Forge uses OpenRouter and saves conversation sessions locally so you can resume work later.
 
