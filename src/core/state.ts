@@ -3,7 +3,7 @@ import path from 'path';
 import type { StateAccessor, ConversationState } from '@openrouter/agent';
 import type { Message } from '../types/index.js';
 import { compactIfNeeded, DEFAULT_COMPACTION_CONFIG } from './compaction.js';
-type SessionMetaEntry = { id: string; title: string; createdAt: number };
+type SessionMetaEntry = { id: string; title: string; createdAt: number; modelId?: string };
 
 const META_SESSION_DIR = path.join(process.cwd(), '.forge', 'meta');
 const ensureMetaDir = () => {
@@ -173,16 +173,24 @@ function readMeta(): SessionMetaEntry[] {
   }
 }
 
-export function saveSessionTitle(sessionId: string, title: string) {
+export function saveSessionTitle(sessionId: string, title: string, modelId?: string) {
   const meta = readMeta();
-  if (!meta.some(m => m.id === sessionId)) {
-    meta.push({ id: sessionId, title, createdAt: Date.now() });
-    fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2));
+  const existingIndex = meta.findIndex(m => m.id === sessionId);
+  if (existingIndex === -1) {
+    meta.push({ id: sessionId, title, createdAt: Date.now(), modelId });
+  } else if (modelId) {
+    const entry = meta[existingIndex];
+    if (entry) entry.modelId = modelId;
   }
+  fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2));
 }
 
 export function getSessionTitle(sessionId: string): string | null {
   return readMeta().find(m => m.id === sessionId)?.title ?? null;
+}
+
+export function getSessionModel(sessionId: string): string | null {
+  return readMeta().find(m => m.id === sessionId)?.modelId ?? null;
 }
 
 export function listSessionMeta(): SessionMetaEntry[] {

@@ -3,16 +3,17 @@ import 'dotenv/config';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { render, Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
 import Gradient from 'ink-gradient';
 import { randomUUID } from 'crypto';
 import { runAgent, type LogEvent } from './agent-cli.js';
-import { MODEL, AGENT_NAME } from '../core/constants.js';
-import { getLatestSessionId, listSessions } from '../core/index.js';
+import { AGENT_NAME } from '../core/constants.js';
+import { getLatestSessionId, listSessions, saveSessionTitle, getSessionModel, CODING_MODELS, DEFAULT_MODEL_ID, getModelName, type ModelInfo } from '../core/index.js';
 import { listSessionMeta } from '../core/state.js';
+import { ModelPickerModal } from './components/ModelPickerModal.js';
 
 // --- config command: runs before anything else, exits early if matched ---
 const cliArgs = process.argv.slice(2);
@@ -40,14 +41,14 @@ type DisplayEntry = {
 
 let entryId = 0;
 
-function Header({ sessionId, title }: { sessionId: string; title: string | null }) {
+function Header({ sessionId, title, modelName }: { sessionId: string; title: string | null; modelName: string }) {
   return (
     <Box flexDirection="column" padding={1}>
       <Box flexDirection="column" marginBottom={1}>
         <Gradient name="pastel">
           <Text bold>▲ {AGENT_NAME}</Text>
         </Gradient>
-        <Text dimColor>model: {MODEL} | session: {sessionId.slice(0, 8)}</Text>
+        <Text dimColor>model: {modelName} | session: {sessionId.slice(0, 8)}</Text>
         <Text dimColor>title: {title || 'Unnamed'} | dir: {process.cwd()}</Text>
       </Box>
     </Box>
@@ -126,6 +127,16 @@ function App() {
   const [entries, setEntries] = useState<DisplayEntry[]>([]);
   const [usage, setUsage] = useState<{ inputTokens: number; outputTokens: number; cost: number }>({ inputTokens: 0, outputTokens: 0, cost: 0 });
   const [title, setTitle] = useState<string | null>(null);
+  const [currentModelId, setCurrentModelId] = useState<string>(DEFAULT_MODEL_ID);
+  const [showModelPicker, setShowModelPicker] = useState(false);
+
+  // Load saved model for resumed session
+  useEffect(() => {
+    const savedModel = getSessionModel(sessionId);
+    if (savedModel) {
+      setCurrentModelId(savedModel);
+    }
+  }, [sessionId]);
 
   function pushEntry(kind: DisplayEntry['kind'], text: string) {
     setEntries(prev => [...prev, { id: entryId++, kind, text }]);
@@ -161,30 +172,41 @@ function App() {
     }
   });
 
+  function handleModelSelect(modelId: string) {
+    setCurrentModelId(modelId);
+    saveSessionTitle(sessionId, title ?? '', modelId);
+    setShowModelPicker(false);
+    pushEntry('info', `Model switched to ${getModelName(modelId)}`);
+  }
+
   async function handleSubmit(value: string) {
-    if (!value.trim() || isProcessing) return;
-    if (value.trim().toLowerCase() === '/exit') {
+    const trimmed = value.trim();
+    if (!trimmed || isProcessing) return;
+
+    const lower = trimmed.toLowerCase();
+    if (lower === '/exit') {
       process.exit(0);
     }
-    if (value.trim().toLowerCase() === '/clear') {
+    if (lower === '/clear') {
       setEntries([]);
       setUsage({ inputTokens: 0, outputTokens: 0, cost: 0 });
       setInput('');
       return;
     }
-    if (value.trim().toLowerCase() === '/new') {
+    if (lower === '/new') {
       sessionIdRef.current = randomUUID();
       setEntries([]);
       setUsage({ inputTokens: 0, outputTokens: 0, cost: 0 });
+      setCurrentModelId(DEFAULT_MODEL_ID);
       setInput('');
       return;
     }
-    if (value.trim().toLowerCase() === '/help') {
-      pushEntry('info', 'Available commands:\n/clear - Clear the chat history\n/help - Show this help message\n/exit - Exit the application');
+    if (lower === '/help') {
+      pushEntry('info', 'Available commands:\n/clear - Clear the chat history\n/help - Show this help message\n/exit - Exit the application\n/models - Open model picker\n/model <id> - Quick switch model');
       setInput('');
       return;
     }
-    if (value.trim().toLowerCase() === '/sessions') {
+    if (lower === '/sessions') {
       const sessions = listSessionMeta().sort((a, b) => b.createdAt - a.createdAt);
       const lines = sessions.map(s => `${s.title}  (${s.id.slice(0, 8)})`);
       pushEntry('info', sessions.length ? `Sessions:\n${lines.join('\n')}` : 'No sessions yet.');
@@ -192,8 +214,26 @@ function App() {
       setTitle(sessions.find(s => s.id === sessionId)?.title ?? null);
       return;
     }
+    if (lower === '/models') {
+      setShowModelPicker(true);
+      setInput('');
+      return;
+    }
+    if (lower.startsWith('/model ')) {
+      const modelId = trimmed.slice(7).trim();
+      const model = CODING_MODELS.find(m => m.id === modelId);
+      if (model) {
+        setCurrentModelId(model.id);
+        saveSessionTitle(sessionId, title ?? '', model.id);
+        pushEntry('info', `Model switched to ${model.name}`);
+      } else {
+        pushEntry('info', `Unknown model: ${modelId}. Use /models to see available models.`);
+      }
+      setInput('');
+      return;
+    }
 
-    pushEntry('user', value);
+    pushEntry('user', trimmed);
     setInput('');
     setIsProcessing(true);
 
@@ -224,18 +264,18 @@ function App() {
       }
     };
 
-    await runAgent(sessionId, value, {
+    await runAgent(sessionId, trimmed, {
       onLog,
       onConfirm: handleConfirm,
       onUsage: usageLimit,
-    });
+    }, currentModelId);
 
     setIsProcessing(false);
   }
 
   return (
     <Box flexDirection="column" padding={1}>
-      <Header sessionId={sessionId} title={title} />
+      <Header sessionId={sessionId} title={title} modelName={getModelName(currentModelId)} />
       <Box flexDirection="column">
         {entries.map(entry => (
           <EntryLine key={entry.id} entry={entry} />
@@ -251,7 +291,7 @@ function App() {
       {!pendingConfirm && (
         <Box marginTop={1} paddingX={1} borderStyle="round" borderColor={isProcessing ? 'gray' : 'cyan'}>
           <Text color="cyanBright" bold>{'❯ '}</Text>
-          <TextInput value={input} onChange={setInput} onSubmit={handleSubmit} focus={!isProcessing} />
+          <TextInput value={input} onChange={setInput} onSubmit={handleSubmit} focus={!isProcessing && !showModelPicker} />
         </Box>
       )}
       {isProcessing && (
@@ -266,6 +306,13 @@ function App() {
         <Text dimColor>type "/exit" to quit</Text>
         <Text dimColor> | Input tokens used: {usage.inputTokens} | Output tokens used: {usage.outputTokens} | estimated cost: ${usage.cost.toFixed(4)}</Text>
       </Box>
+      <ModelPickerModal
+        isOpen={showModelPicker}
+        onClose={() => setShowModelPicker(false)}
+        onSelect={handleModelSelect}
+        currentModelId={currentModelId}
+        models={CODING_MODELS}
+      />
     </Box>
   );
 }

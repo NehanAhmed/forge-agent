@@ -1,5 +1,7 @@
 // core/client.ts
 import 'dotenv/config';
+import { config } from 'dotenv';
+config({ override: true }); // Allow .env to override existing env vars (e.g., OpenCode's placeholder)
 import fs from 'fs';
 import path from 'path';
 import os from 'os';

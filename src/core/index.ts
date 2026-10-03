@@ -12,5 +12,6 @@ export {
   SUBAGENT_TOOLS,
 } from './constants.js';
 export { compactIfNeeded, DEFAULT_COMPACTION_CONFIG, type CompactionConfig } from './compaction.js';
-export { createStateAccessor, listSessions, getLatestSessionId, stateToMessages } from './state.js';
+export { createStateAccessor, listSessions, getLatestSessionId, stateToMessages, saveSessionTitle, getSessionTitle, getSessionModel, listSessionMeta } from './state.js';
 export type { SessionSummary } from './state.js';
+export { CODING_MODELS, DEFAULT_MODEL_ID, getModelById, getModelName, type ModelInfo } from './models.js';

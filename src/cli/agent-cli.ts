@@ -5,6 +5,7 @@ import { getClient } from '../core/client.js';
 import { buildSystemPrompt, MAX_ITERATIONS, MODEL, SYSTEM_PROMPT } from '../core/constants.js';
 import { createStateAccessor, saveSessionTitle } from '../core/state.js';
 import { deriveSessionTitle } from '../tools/helpers.js';
+import { DEFAULT_MODEL_ID } from '../core/models.js';
 
 export type LogEvent =
   | { type: 'reasoning_delta'; content: string }
@@ -28,8 +29,8 @@ function generateId(): string {
 export async function runAgent(
   sessionId: string,
   userMessage: string,
-  callbacks: Callbacks
-
+  callbacks: Callbacks,
+  modelId: string = DEFAULT_MODEL_ID
 ): Promise<ConversationState> {
   const tools = createTools(callbacks.onConfirm);
   const stateAccessor = createStateAccessor(sessionId);
@@ -39,7 +40,7 @@ export async function runAgent(
   let result;
   try {
     result = getClient().callModel({
-      model: MODEL,
+      model: modelId,
       instructions: buildSystemPrompt(process.cwd()),
       input: userMessage,
       tools,
@@ -54,7 +55,7 @@ export async function runAgent(
     throw err;
   }
   if (isNewSession) {
-    saveSessionTitle(sessionId, deriveSessionTitle(userMessage));
+    saveSessionTitle(sessionId, deriveSessionTitle(userMessage), modelId);
   }
 
   const reasoningTask = (async () => {

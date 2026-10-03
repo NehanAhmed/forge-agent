@@ -9,7 +9,8 @@
     "build": "tsc && npm run postbuild",
     "postbuild": "node ./scripts/add-shebang.js",
     "prepare": "npm run build",
-    "eval": "tsx evals/runner.ts"
+    "eval": "tsx evals/runner.ts",
+    "dev": "tsx watch src/cli/app.tsx --onSuccess \"node ./scripts/add-shebang.js\""
   },
   "bin": {
     "forge": "./dist/cli/app.js"
@@ -22,7 +23,7 @@
     "agent",
     "cli",
     "coding-agent",
-    "mutli-model"
+    "multi-model"
   ],
   "repository": {
     "type": "git",
