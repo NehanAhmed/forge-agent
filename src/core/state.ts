@@ -3,6 +3,7 @@ import path from 'path';
 import type { StateAccessor, ConversationState } from '@openrouter/agent';
 import type { Message } from '../types/index.js';
 import { compactIfNeeded, DEFAULT_COMPACTION_CONFIG } from './compaction.js';
+import { loadTodos, saveTodos, mergeTodosIntoState, extractTodosFromState, type TodoList } from './todos.js';
 type SessionMetaEntry = { id: string; title: string; createdAt: number; modelId?: string };
 
 const META_SESSION_DIR = path.join(process.cwd(), '.forge', 'meta');
@@ -44,14 +45,22 @@ export function createStateAccessor(
       if (!fs.existsSync(statePath)) return null;
       try {
         const data = fs.readFileSync(statePath, 'utf-8');
-        return JSON.parse(data) as ConversationState;
+        const state = JSON.parse(data) as ConversationState;
+        // Load todos and merge into state
+        const todos = loadTodos(sessionId);
+        return mergeTodosIntoState(state, todos);
       } catch {
         return null;
       }
     },
     save: async (state: ConversationState): Promise<void> => {
       const compacted = await compactIfNeeded(state, compactionConfig);
-      fs.writeFileSync(statePath, JSON.stringify(compacted, null, 2));
+      // Extract and save todos separately
+      const todos = extractTodosFromState(compacted);
+      saveTodos(sessionId, todos.items);
+      // Save state without todos (todos are stored separately)
+      const { todos: _unused, ...stateWithoutTodos } = compacted as any;
+      fs.writeFileSync(statePath, JSON.stringify(stateWithoutTodos, null, 2));
     },
   };
 }

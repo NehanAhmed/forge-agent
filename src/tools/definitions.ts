@@ -1,7 +1,7 @@
 // tools.ts — Agent SDK style
 import { tool } from '@openrouter/agent';
 import { z } from 'zod';
-import { runBash, readFile, writeFile, editFile, spawnSubAgent, searchCodebase } from './implementations.js';
+import { runBash, readFile, writeFile, editFile, spawnSubAgent, searchCodebase, gitStatus, gitDiff, gitAdd, gitCommit } from './implementations.js';
 import { RISKY_TOOLS } from '../core/constants.js';
 
 export type OnConfirm = (description: string) => Promise<boolean>;
@@ -91,6 +91,45 @@ export function createTools(onConfirm: OnConfirm) {
     }),
   });
 
+  const gitStatusTool = tool({
+    name: 'git_status',
+    description:
+      'Show the current git repository status including branch, staged changes, unstaged changes, and untracked files. Run this before committing to see what has changed. Returns the raw `git status --porcelain=v1 --branch` output.',
+    inputSchema: z.object({}),
+    execute: async () => ({ output: gitStatus() }),
+  });
+
+  const gitDiffTool = tool({
+    name: 'git_diff',
+    description:
+      'Show a diff of changes in the repository. Use `staged: true` to see staged changes (what will be committed), or `staged: false` (default) to see unstaged working tree changes. Optionally limit to specific files with `paths`. Output is truncated at 50,000 characters with a notice if truncated.',
+    inputSchema: z.object({
+      staged: z.boolean().optional().default(false).describe('Show staged changes instead of working tree changes.'),
+      paths: z.array(z.string()).optional().describe('Limit diff to these file paths.'),
+    }),
+    execute: async ({ staged, paths }) => ({ output: gitDiff(staged ?? false, paths ?? []) }),
+  });
+
+  const gitAddTool = tool({
+    name: 'git_add',
+    description:
+      'Stage files for commit. Provide a list of file or directory paths to stage. Each path is validated to be inside the repository. Staging everything requires explicitly passing ["."]. Returns a confirmation with the number of files staged. Warns if staging files that look like secrets (.env, *.pem, id_rsa).',
+    inputSchema: z.object({
+      paths: z.array(z.string()).min(1).describe('File or directory paths to stage. Use ["."] to stage all changes explicitly.'),
+    }),
+    execute: async ({ paths }) => ({ output: gitAdd(paths) }),
+  });
+
+  const gitCommitTool = tool({
+    name: 'git_commit',
+    description:
+      'Create a commit from currently staged changes. The message should have a short imperative subject line (50-72 chars) and an optional body. Before committing, run git_status and git_diff with staged:true to verify what will be committed. Commits only staged files — never auto-stages. Rejects empty messages and commits with nothing staged. Returns the commit hash, branch, and file summary on success.',
+    inputSchema: z.object({
+      message: z.string().min(1).describe('Commit message (subject line + optional body).'),
+    }),
+    execute: async ({ message }) => ({ output: gitCommit(message) }),
+  });
+
   return [
     runBashTool,
     readFileTool,
@@ -98,5 +137,9 @@ export function createTools(onConfirm: OnConfirm) {
     replaceStringInFileTool,
     spawnSubAgentTool,
     searchCodeTool,
+    gitStatusTool,
+    gitDiffTool,
+    gitAddTool,
+    gitCommitTool,
   ];
 }

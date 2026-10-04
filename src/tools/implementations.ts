@@ -5,6 +5,111 @@ import { MODEL, SUBAGENT_MAX_ITERATIONS, SUBAGENT_TOOLS, SYSTEM_PROMPT } from '.
 import { getClient } from '../core/client.js';
 import { formatRgOutput, resolveSafePath } from './helpers.js';
 import { stepCountIs } from '@openrouter/agent';
+import { loadTodos, saveTodos, formatTodoListOutput, getTodoCounts, type TodoItem } from '../core/todos.js';
+
+const GIT_TIMEOUT = 30_000;
+const DIFF_TRUNCATE_LIMIT = 50_000;
+
+function runGit(args: string[], cwd: string = process.cwd()): string {
+  try {
+    return execFileSync('git', args, {
+      encoding: 'utf-8',
+      timeout: GIT_TIMEOUT,
+      cwd,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      maxBuffer: 10 * 1024 * 1024,
+    });
+  } catch (err: any) {
+    const stderr = err.stderr?.toString() ?? '';
+    const stdout = err.stdout?.toString() ?? '';
+    return `ERROR: ${stderr || stdout || err.message}`;
+  }
+}
+
+function isGitRepo(cwd: string = process.cwd()): boolean {
+  try {
+    execFileSync('git', ['rev-parse', '--git-dir'], { cwd, stdio: 'ignore', timeout: 5_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function gitStatus(): string {
+  if (!isGitRepo()) {
+    return 'ERROR: Not a git repository (or git not installed).';
+  }
+  return runGit(['status', '--porcelain=v1', '--branch']);
+}
+
+export function gitDiff(staged: boolean = false, paths: string[] = []): string {
+  if (!isGitRepo()) {
+    return 'ERROR: Not a git repository (or git not installed).';
+  }
+  const args = ['diff'];
+  if (staged) args.push('--cached');
+  if (paths.length > 0) {
+    args.push('--', ...paths);
+  }
+  let output = runGit(args);
+  if (output.startsWith('ERROR:')) return output;
+  if (output.length > DIFF_TRUNCATE_LIMIT) {
+    output = output.slice(0, DIFF_TRUNCATE_LIMIT) + `\n\n[Output truncated at ${DIFF_TRUNCATE_LIMIT} characters — narrow your paths or use staged diff for smaller output.]`;
+  }
+  return output;
+}
+
+export function gitAdd(paths: string[]): string {
+  if (!isGitRepo()) {
+    return 'ERROR: Not a git repository (or git not installed).';
+  }
+  if (!paths || paths.length === 0) {
+    return 'ERROR: At least one path is required.';
+  }
+  const safePaths: string[] = [];
+  const warnings: string[] = [];
+  for (const p of paths) {
+    try {
+      const safe = resolveSafePath(p);
+      safePaths.push(safe);
+      // Warn about potential secrets
+      const basename = p.split('/').pop()?.toLowerCase() ?? '';
+      if (basename === '.env' || basename.endsWith('.pem') || basename === 'id_rsa' || basename.startsWith('id_rsa.')) {
+        warnings.push(`Warning: Staging potentially sensitive file "${p}".`);
+      }
+    } catch (err: any) {
+      return `ERROR: ${err.message}`;
+    }
+  }
+  const output = runGit(['add', '--', ...safePaths]);
+  if (output.startsWith('ERROR:')) return output;
+  let result = `Staged ${safePaths.length} file(s).`;
+  if (warnings.length > 0) result += '\n' + warnings.join('\n');
+  return result;
+}
+
+export function gitCommit(message: string): string {
+  if (!isGitRepo()) {
+    return 'ERROR: Not a git repository (or git not installed).';
+  }
+  const trimmed = message.trim();
+  if (!trimmed) {
+    return 'ERROR: Commit message cannot be empty or whitespace only.';
+  }
+  // Check if anything is staged
+  const status = runGit(['diff', '--cached', '--name-only']);
+  if (status.startsWith('ERROR:')) return status;
+  if (!status.trim()) {
+    return 'ERROR: Nothing staged to commit. Use git_add to stage files first.';
+  }
+  const output = runGit(['commit', '-m', trimmed]);
+  if (output.startsWith('ERROR:')) return output;
+  // Get commit hash and summary
+  const hash = runGit(['rev-parse', '--short', 'HEAD']).trim();
+  const branch = runGit(['rev-parse', '--abbrev-ref', 'HEAD']).trim();
+  const summary = runGit(['show', '--stat', '--oneline', '-1', 'HEAD']).trim();
+  return `Committed ${hash} on ${branch}\n${summary}`;
+}
 
 export function runBash(command: string): string {
   // NOTE: run_bash is NOT path-sandboxed — a shell command can `cd`, use
@@ -106,6 +211,25 @@ export function searchCodebase(pattern: string, path: string = '.', maxResults: 
   }
 }
 
+export function todoWrite(sessionId: string, todos: Array<{ id: string; content: string; status: 'pending' | 'in_progress' | 'completed' }>): string {
+  try {
+    const saved = saveTodos(sessionId, todos as TodoItem[]);
+    const counts = getTodoCounts(saved.items);
+    return `${formatTodoListOutput(saved.items)}\n\nSaved ${counts.total} todo(s) (${counts.completed} completed, ${counts.inProgress} in progress, ${counts.pending} pending).`;
+  } catch (err: any) {
+    return `ERROR: ${err.message}`;
+  }
+}
+
+export function todoRead(sessionId: string): string {
+  try {
+    const todoList = loadTodos(sessionId);
+    return formatTodoListOutput(todoList.items);
+  } catch (err: any) {
+    return `ERROR: ${err.message}`;
+  }
+}
+
 export const toolExecutors: Record<string, (args: any) => string | Promise<string>> = {
   run_bash: (args) => runBash(args.command),
   read_file: (args) => readFile(args.path),
@@ -113,4 +237,10 @@ export const toolExecutors: Record<string, (args: any) => string | Promise<strin
   replace_string_in_file: (args) => editFile(args.path, args.stringToReplace, args.newString),
   spawn_sub_agent: (args) => spawnSubAgent(args.task),
   search_code: (args) => searchCodebase(args.pattern, args.path, args.maxResults),
+  git_status: (args) => gitStatus(),
+  git_diff: (args) => gitDiff(args.staged ?? false, args.paths ?? []),
+  git_add: (args) => gitAdd(args.paths),
+  git_commit: (args) => gitCommit(args.message),
+  todo_write: (args) => todoWrite(args.sessionId ?? '', args.todos),
+  todo_read: (args) => todoRead(args.sessionId ?? ''),
 };

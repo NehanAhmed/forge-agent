@@ -6,6 +6,10 @@ export {
   editFile,
   spawnSubAgent,
   searchCodebase,
+  gitStatus,
+  gitDiff,
+  gitAdd,
+  gitCommit,
   toolExecutors,
 } from './implementations.js';
 export { formatRgOutput } from './helpers.js';

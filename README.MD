@@ -93,8 +93,27 @@ forge --resume SESSION_ID
 - Run shell commands and create or edit project files. Forge asks for confirmation before running shell commands or writing/editing files; respond with `y` or `n` to approve or deny each action.
 - Delegate isolated investigations to a read-only sub-agent.
 - Save and resume conversations from the project directory.
+- **Git operations**: Inspect repository status (`git_status`), view diffs (`git_diff`), stage files (`git_add`), and create commits (`git_commit`) — all without leaving the agent session.
 
 Shell commands run with your operating-system permissions and are not sandboxed. Review commands before confirming them, especially commands that modify files or affect your system.
+
+## Git Tools
+
+Forge includes four git tools that let the agent manage version control directly:
+
+| Tool | Description |
+|------|-------------|
+| `git_status` | Show the current branch, staged changes, unstaged changes, and untracked files. Runs `git status --porcelain=v1 --branch`. |
+| `git_diff` | Show diffs of working tree changes (default) or staged changes (`staged: true`). Optionally limit to specific file paths. Output is truncated at 50,000 characters. |
+| `git_add` | Stage files for commit. Takes a list of paths (at least one required). Paths are validated to be inside the repository. Use `["."]` to explicitly stage everything. Warns when staging files that look like secrets (`.env`, `*.pem`, `id_rsa*`). |
+| `git_commit` | Create a commit from currently staged changes. Requires a non-empty message. Rejects commits with nothing staged. Returns the commit hash, branch, and file summary. Runs git hooks normally. |
+
+**Safety notes:**
+- All tools run against the workspace root (the agent's working directory).
+- Path traversal is blocked — paths must resolve inside the repository.
+- Option injection is prevented — `--` is always used before path lists.
+- No destructive operations: no `push`, `reset`, `--force`, `--amend`, `--no-verify`, or `commit -a`.
+- Git hooks run normally; hook failures are returned as errors.
 
 ## Local data
 
