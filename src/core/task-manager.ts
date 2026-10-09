@@ -15,6 +15,17 @@ import { runAgentHeadless } from './headless.js';
 import { createStateAccessor } from './state.js';
 import { createBudget } from './budget.js';
 import { getClient } from './client.js';
+import {
+  createWorktree,
+  removeWorktree,
+  checkpointCommit,
+  hasChangesFromBase,
+  getDiff,
+  mergeWorktree,
+  listOrphanedWorktrees,
+  type TaskDiff,
+  type MergeResult,
+} from './worktree.js';
 
 export interface CreateTaskOpts {
   policy?: ApprovalPolicy;
@@ -60,11 +71,23 @@ export class TaskManager extends EventEmitter {
   private abortControllers = new Map<string, AbortController>();
   private concurrency: number;
   private rateLimitedUntil: number | null = null;
+  private repoCwd: string;
 
-  constructor(opts: { concurrency?: number } = {}) {
+  constructor(opts: { concurrency?: number; repoCwd?: string } = {}) {
     super();
     this.concurrency = opts.concurrency ?? 2;
+    this.repoCwd = opts.repoCwd ?? process.cwd();
     this.load();
+
+    // Detect orphaned worktrees on startup
+    const knownTaskIds = new Set(Array.from(this.tasks.keys()));
+    const orphans = listOrphanedWorktrees(this.repoCwd, knownTaskIds);
+    if (orphans.length > 0) {
+      console.warn(`[task-manager] Found ${orphans.length} orphaned worktree(s) — not auto-deleted:`);
+      for (const orphan of orphans) {
+        console.warn(`  ${orphan}`);
+      }
+    }
   }
 
   private load(): void {
@@ -327,6 +350,32 @@ export class TaskManager extends EventEmitter {
       // Update status to running
       this.updateStatus(taskId, 'running');
 
+      // Set up worktree isolation if requested
+      if (task.isolation === 'worktree') {
+        try {
+          const worktreeInfo = createWorktree(taskId, task.goal, this.repoCwd);
+          task.worktree = worktreeInfo;
+          task.cwd = worktreeInfo.path;
+          this.scheduleSave();
+          this.log(taskId, {
+            type: 'info',
+            content: `Created worktree at ${worktreeInfo.path} on branch ${worktreeInfo.branch}`,
+          });
+        } catch (err: any) {
+          // Fall back to shared isolation
+          task.isolation = 'shared';
+          if (task.policy === 'auto_in_worktree') {
+            task.policy = 'ask';
+          }
+          task.statusDetail = `Worktree creation failed, using shared isolation: ${err.message}`;
+          this.log(taskId, {
+            type: 'info',
+            content: `Worktree creation failed, falling back to shared: ${err.message}`,
+          });
+          this.scheduleSave();
+        }
+      }
+
       // Create budget (use provided or default)
       const budget = createBudget({
         maxRequests: 60,
@@ -357,17 +406,26 @@ export class TaskManager extends EventEmitter {
       task.summary = result.summary;
 
       if (result.outcome === 'done') {
+        // Handle worktree post-task
+        if (task.worktree) {
+          await this.finalizeWorktree(task);
+        }
         this.updateStatus(taskId, 'done');
       } else if (result.outcome === 'cancelled') {
         this.updateStatus(taskId, 'cancelled');
       } else {
         task.error = result.error;
-        task.resumable = result.error?.code === 'max_steps';
+        task.resumable = result.error?.code === 'max_steps' || result.error?.code === 'interrupted';
+
+        // Handle worktree on failure too
+        if (task.worktree && result.outcome === 'failed') {
+          await this.finalizeWorktree(task);
+        }
+
         this.updateStatus(taskId, 'failed');
 
         // Check for rate limiting
         if (result.error?.code === 'rate_limited') {
-          // Pause queue for a while
           this.rateLimitedUntil = Date.now() + 60_000; // 1 minute default
           this.log(taskId, {
             type: 'info',
@@ -389,6 +447,52 @@ export class TaskManager extends EventEmitter {
       this.abortControllers.delete(taskId);
       this.scheduleSave();
     }
+  }
+
+  private async finalizeWorktree(task: Task): Promise<void> {
+    if (!task.worktree) return;
+
+    try {
+      // Make a checkpoint commit for any uncommitted changes
+      const shortGoal = task.goal.slice(0, 40);
+      const shortId = task.id.replace('task_', '').slice(0, 8);
+      checkpointCommit(task.worktree, `task ${shortId}: ${shortGoal}`);
+    } catch (err: any) {
+      // Hook failure or other commit error
+      task.reviewState = 'needs_attention';
+      task.error = {
+        code: 'checkpoint_failed',
+        message: err.message,
+      };
+      this.log(task.id, {
+        type: 'error',
+        content: `Checkpoint commit failed: ${err.message}`,
+      });
+      this.emit('task:review', { taskId: task.id, reviewState: 'needs_attention' });
+      return;
+    }
+
+    // Check if there are any changes vs base
+    const hasChanges = hasChangesFromBase(task.worktree);
+    if (hasChanges) {
+      task.reviewState = 'pending_review';
+      this.emit('task:review', { taskId: task.id, reviewState: 'pending_review' });
+      this.log(task.id, {
+        type: 'info',
+        content: `Task complete. Changes are ready for review on branch ${task.worktree.branch}`,
+      });
+    } else {
+      // No changes — clean up worktree immediately
+      task.reviewState = 'none';
+      try {
+        removeWorktree(task.worktree, this.repoCwd);
+        this.log(task.id, { type: 'info', content: `No changes made. Worktree removed.` });
+      } catch (err: any) {
+        this.log(task.id, { type: 'info', content: `Worktree cleanup warning: ${err.message}` });
+      }
+    }
+
+    this.scheduleSave();
   }
 
   log(taskId: string, entry: Omit<LogEntry, 'seq' | 'timestamp'>): void {
@@ -499,6 +603,45 @@ export class TaskManager extends EventEmitter {
     this.approvals.delete(approvalId);
 
     this.emit('approval:resolved', { approvalId, taskId: approval.taskId, decision });
+  }
+
+  async getDiff(id: string): Promise<TaskDiff> {
+    const task = this.tasks.get(id);
+    if (!task) throw new Error(`Task not found: ${id}`);
+    if (!task.worktree) throw new Error(`Task ${id} has no worktree`);
+    return getDiff(task.worktree);
+  }
+
+  async merge(id: string, opts?: { message?: string }): Promise<MergeResult> {
+    const task = this.tasks.get(id);
+    if (!task) throw new Error(`Task not found: ${id}`);
+    if (!task.worktree) throw new Error(`Task ${id} has no worktree`);
+
+    const result = await mergeWorktree(task.worktree, this.repoCwd, opts);
+
+    if (result.success) {
+      task.reviewState = 'merged';
+      task.worktree = undefined;
+    } else if (result.conflictedFiles?.length) {
+      task.reviewState = 'conflict';
+    }
+
+    this.scheduleSave();
+    this.emit('task:review', { taskId: id, reviewState: task.reviewState });
+    return result;
+  }
+
+  async discard(id: string, force = false): Promise<void> {
+    const task = this.tasks.get(id);
+    if (!task) throw new Error(`Task not found: ${id}`);
+    if (!task.worktree) throw new Error(`Task ${id} has no worktree`);
+
+    removeWorktree(task.worktree, this.repoCwd, force);
+
+    task.reviewState = 'discarded';
+    task.worktree = undefined;
+    this.scheduleSave();
+    this.emit('task:review', { taskId: id, reviewState: 'discarded' });
   }
 
   async shutdown(opts?: { graceMs?: number }): Promise<void> {
