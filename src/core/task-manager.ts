@@ -2,7 +2,7 @@ import { EventEmitter } from 'events';
 import { randomBytes } from 'crypto';
 import type { Task, TaskStatus, Isolation } from './task.js';
 import { createTask, validateStatusTransition, isValidTransition } from './task.js';
-import type { ApprovalPolicy, LogEntry, ApprovalRequest } from './context.js';
+import type { ApprovalPolicy, LogEntry, ApprovalRequest, AgentContext, Budget } from './context.js';
 import {
   loadTaskIndex,
   saveTaskIndex,
@@ -11,12 +11,17 @@ import {
   getTaskStateDir,
   type TaskIndex,
 } from './persistence.js';
+import { runAgentHeadless } from './headless.js';
+import { createStateAccessor } from './state.js';
+import { createBudget } from './budget.js';
+import { getClient } from './client.js';
 
 export interface CreateTaskOpts {
   policy?: ApprovalPolicy;
   isolation?: Isolation;
   readOnly?: boolean;
   cwd?: string;
+  budget?: Budget;
 }
 
 export interface Approval {
@@ -49,8 +54,16 @@ export class TaskManager extends EventEmitter {
   private readonly LOG_BUFFER_SIZE = 2000;
   private readonly SAVE_DEBOUNCE_MS = 500;
 
-  constructor() {
+  // Queue management
+  private queue: string[] = []; // Task IDs waiting to run
+  private running = new Set<string>(); // Task IDs currently running
+  private abortControllers = new Map<string, AbortController>();
+  private concurrency: number;
+  private rateLimitedUntil: number | null = null;
+
+  constructor(opts: { concurrency?: number } = {}) {
     super();
+    this.concurrency = opts.concurrency ?? 2;
     this.load();
   }
 
@@ -156,8 +169,14 @@ export class TaskManager extends EventEmitter {
     this.logs.set(id, []);
     this.logSeq.set(id, 0);
 
+    // Add to queue
+    this.queue.push(id);
+
     this.scheduleSave();
     this.emit('task:created', { taskId: id, task });
+
+    // Start processing queue
+    this.processQueue();
 
     return task;
   }
@@ -249,17 +268,127 @@ export class TaskManager extends EventEmitter {
     }
 
     if (task.status === 'queued') {
-      // Just mark cancelled, never started
+      // Remove from queue, never started
+      const queueIndex = this.queue.indexOf(id);
+      if (queueIndex !== -1) {
+        this.queue.splice(queueIndex, 1);
+      }
       task.status = 'cancelled';
       task.finishedAt = Date.now();
     } else {
-      // Running or waiting approval - will be aborted externally
+      // Running or waiting approval - abort it
+      const abort = this.abortControllers.get(id);
+      if (abort) {
+        abort.abort(new Error('Task cancelled'));
+      }
       task.status = 'cancelled';
       task.finishedAt = Date.now();
     }
 
     this.scheduleSave();
     this.emit('task:status', { taskId: id, newStatus: 'cancelled', task });
+  }
+
+  private processQueue(): void {
+    // Check rate limit
+    if (this.rateLimitedUntil && Date.now() < this.rateLimitedUntil) {
+      // Still rate limited, don't start new tasks
+      return;
+    }
+
+    // Start tasks up to concurrency limit
+    while (this.running.size < this.concurrency && this.queue.length > 0) {
+      const taskId = this.queue.shift();
+      if (!taskId) break;
+
+      const task = this.tasks.get(taskId);
+      if (!task) continue;
+
+      // Skip if already running or not queued
+      if (task.status !== 'queued') continue;
+
+      this.running.add(taskId);
+      this.runTask(taskId).finally(() => {
+        this.running.delete(taskId);
+        this.processQueue(); // Process next in queue
+      });
+    }
+  }
+
+  private async runTask(taskId: string): Promise<void> {
+    const task = this.tasks.get(taskId);
+    if (!task) return;
+
+    // Create abort controller
+    const abort = new AbortController();
+    this.abortControllers.set(taskId, abort);
+
+    try {
+      // Update status to running
+      this.updateStatus(taskId, 'running');
+
+      // Create budget (use provided or default)
+      const budget = createBudget({
+        maxRequests: 60,
+        maxTokens: 1_000_000,
+        maxCost: undefined,
+      });
+
+      // Create agent context
+      const ctx: AgentContext = {
+        taskId,
+        cwd: task.cwd,
+        signal: abort.signal,
+        state: createStateAccessor(task.sessionId, getTaskStateDir(taskId)),
+        policy: task.policy,
+        budget,
+        log: (entry) => this.log(taskId, entry),
+        requestApproval: (req) => this.requestApproval(taskId, req),
+        callModel: getClient().callModel.bind(getClient()),
+      };
+
+      // Run the agent headlessly
+      const result = await runAgentHeadless(task.goal, ctx, {
+        maxSteps: 50,
+      });
+
+      // Update task with result
+      task.usage = result.usage;
+      task.summary = result.summary;
+
+      if (result.outcome === 'done') {
+        this.updateStatus(taskId, 'done');
+      } else if (result.outcome === 'cancelled') {
+        this.updateStatus(taskId, 'cancelled');
+      } else {
+        task.error = result.error;
+        task.resumable = result.error?.code === 'max_steps';
+        this.updateStatus(taskId, 'failed');
+
+        // Check for rate limiting
+        if (result.error?.code === 'rate_limited') {
+          // Pause queue for a while
+          this.rateLimitedUntil = Date.now() + 60_000; // 1 minute default
+          this.log(taskId, {
+            type: 'info',
+            content: `Rate limited, pausing queue for 1 minute`,
+          });
+        }
+      }
+
+      this.emit('task:usage', { taskId, usage: result.usage });
+    } catch (err: any) {
+      const errMsg = err?.message ?? String(err);
+      task.error = {
+        code: 'execution_error',
+        message: errMsg,
+      };
+      this.updateStatus(taskId, 'failed');
+      this.log(taskId, { type: 'error', content: `Task execution error: ${errMsg}` });
+    } finally {
+      this.abortControllers.delete(taskId);
+      this.scheduleSave();
+    }
   }
 
   log(taskId: string, entry: Omit<LogEntry, 'seq' | 'timestamp'>): void {
