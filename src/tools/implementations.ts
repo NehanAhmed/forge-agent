@@ -6,11 +6,12 @@ import { getClient } from '../core/client.js';
 import { formatRgOutput, resolveSafePath } from './helpers.js';
 import { stepCountIs } from '@openrouter/agent';
 import { loadTodos, saveTodos, formatTodoListOutput, getTodoCounts, type TodoItem } from '../core/todos.js';
+import type { AgentContext } from '../core/context.js';
 
 const GIT_TIMEOUT = 30_000;
 const DIFF_TRUNCATE_LIMIT = 50_000;
 
-function runGit(args: string[], cwd: string = process.cwd()): string {
+function runGit(args: string[], cwd: string): string {
   try {
     return execFileSync('git', args, {
       encoding: 'utf-8',
@@ -26,7 +27,7 @@ function runGit(args: string[], cwd: string = process.cwd()): string {
   }
 }
 
-function isGitRepo(cwd: string = process.cwd()): boolean {
+function isGitRepo(cwd: string): boolean {
   try {
     execFileSync('git', ['rev-parse', '--git-dir'], { cwd, stdio: 'ignore', timeout: 5_000 });
     return true;
@@ -35,15 +36,15 @@ function isGitRepo(cwd: string = process.cwd()): boolean {
   }
 }
 
-export function gitStatus(): string {
-  if (!isGitRepo()) {
+export function gitStatus(ctx: AgentContext): string {
+  if (!isGitRepo(ctx.cwd)) {
     return 'ERROR: Not a git repository (or git not installed).';
   }
-  return runGit(['status', '--porcelain=v1', '--branch']);
+  return runGit(['status', '--porcelain=v1', '--branch'], ctx.cwd);
 }
 
-export function gitDiff(staged: boolean = false, paths: string[] = []): string {
-  if (!isGitRepo()) {
+export function gitDiff(ctx: AgentContext, staged: boolean = false, paths: string[] = []): string {
+  if (!isGitRepo(ctx.cwd)) {
     return 'ERROR: Not a git repository (or git not installed).';
   }
   const args = ['diff'];
@@ -51,7 +52,7 @@ export function gitDiff(staged: boolean = false, paths: string[] = []): string {
   if (paths.length > 0) {
     args.push('--', ...paths);
   }
-  let output = runGit(args);
+  let output = runGit(args, ctx.cwd);
   if (output.startsWith('ERROR:')) return output;
   if (output.length > DIFF_TRUNCATE_LIMIT) {
     output = output.slice(0, DIFF_TRUNCATE_LIMIT) + `\n\n[Output truncated at ${DIFF_TRUNCATE_LIMIT} characters — narrow your paths or use staged diff for smaller output.]`;
@@ -59,8 +60,8 @@ export function gitDiff(staged: boolean = false, paths: string[] = []): string {
   return output;
 }
 
-export function gitAdd(paths: string[]): string {
-  if (!isGitRepo()) {
+export function gitAdd(ctx: AgentContext, paths: string[]): string {
+  if (!isGitRepo(ctx.cwd)) {
     return 'ERROR: Not a git repository (or git not installed).';
   }
   if (!paths || paths.length === 0) {
@@ -70,7 +71,7 @@ export function gitAdd(paths: string[]): string {
   const warnings: string[] = [];
   for (const p of paths) {
     try {
-      const safe = resolveSafePath(p);
+      const safe = resolveSafePath(p, ctx.cwd);
       safePaths.push(safe);
       // Warn about potential secrets
       const basename = p.split('/').pop()?.toLowerCase() ?? '';
@@ -81,15 +82,15 @@ export function gitAdd(paths: string[]): string {
       return `ERROR: ${err.message}`;
     }
   }
-  const output = runGit(['add', '--', ...safePaths]);
+  const output = runGit(['add', '--', ...safePaths], ctx.cwd);
   if (output.startsWith('ERROR:')) return output;
   let result = `Staged ${safePaths.length} file(s).`;
   if (warnings.length > 0) result += '\n' + warnings.join('\n');
   return result;
 }
 
-export function gitCommit(message: string): string {
-  if (!isGitRepo()) {
+export function gitCommit(ctx: AgentContext, message: string): string {
+  if (!isGitRepo(ctx.cwd)) {
     return 'ERROR: Not a git repository (or git not installed).';
   }
   const trimmed = message.trim();
@@ -97,45 +98,45 @@ export function gitCommit(message: string): string {
     return 'ERROR: Commit message cannot be empty or whitespace only.';
   }
   // Check if anything is staged
-  const status = runGit(['diff', '--cached', '--name-only']);
+  const status = runGit(['diff', '--cached', '--name-only'], ctx.cwd);
   if (status.startsWith('ERROR:')) return status;
   if (!status.trim()) {
     return 'ERROR: Nothing staged to commit. Use git_add to stage files first.';
   }
-  const output = runGit(['commit', '-m', trimmed]);
+  const output = runGit(['commit', '-m', trimmed], ctx.cwd);
   if (output.startsWith('ERROR:')) return output;
   // Get commit hash and summary
-  const hash = runGit(['rev-parse', '--short', 'HEAD']).trim();
-  const branch = runGit(['rev-parse', '--abbrev-ref', 'HEAD']).trim();
-  const summary = runGit(['show', '--stat', '--oneline', '-1', 'HEAD']).trim();
+  const hash = runGit(['rev-parse', '--short', 'HEAD'], ctx.cwd).trim();
+  const branch = runGit(['rev-parse', '--abbrev-ref', 'HEAD'], ctx.cwd).trim();
+  const summary = runGit(['show', '--stat', '--oneline', '-1', 'HEAD'], ctx.cwd).trim();
   return `Committed ${hash} on ${branch}\n${summary}`;
 }
 
-export function runBash(command: string): string {
+export function runBash(ctx: AgentContext, command: string): string {
   // NOTE: run_bash is NOT path-sandboxed — a shell command can `cd`, use
   // absolute paths, or chain commands in ways resolveSafePath can't
   // intercept. It stays a RISKY_TOOL requiring confirmation; true sandboxing
   // would need a real subprocess jail (e.g. a restricted PATH/cwd + denylist
   // of dangerous patterns), which is a separate, bigger piece of work.
   try {
-    return execSync(command, { encoding: 'utf-8', timeout: 10_000, cwd: process.cwd() });
+    return execSync(command, { encoding: 'utf-8', timeout: 10_000, cwd: ctx.cwd });
   } catch (err: any) {
     return `ERROR: ${err.stdout ?? ''}${err.stderr ?? err.message}`;
   }
 }
 
-export function readFile(path: string): string {
+export function readFile(ctx: AgentContext, path: string): string {
   try {
-    const safePath = resolveSafePath(path);
+    const safePath = resolveSafePath(path, ctx.cwd);
     return fs.readFileSync(safePath, 'utf-8');
   } catch (err: any) {
     return `ERROR: ${err.message}`;
   }
 }
 
-export function writeFile(path: string, content: string): string {
+export function writeFile(ctx: AgentContext, path: string, content: string): string {
   try {
-    const safePath = resolveSafePath(path);
+    const safePath = resolveSafePath(path, ctx.cwd);
     fs.writeFileSync(safePath, content, 'utf-8');
     return `File written successfully to ${path}`;
   } catch (err: any) {
@@ -143,9 +144,9 @@ export function writeFile(path: string, content: string): string {
   }
 }
 
-export function editFile(path: string, oldContent: string, newContent: string): string {
+export function editFile(ctx: AgentContext, path: string, oldContent: string, newContent: string): string {
   try {
-    const safePath = resolveSafePath(path);
+    const safePath = resolveSafePath(path, ctx.cwd);
     const content = fs.readFileSync(safePath, 'utf-8');
     const occurences = content.split(oldContent).length - 1;
     if (occurences === 0) {
@@ -159,8 +160,14 @@ export function editFile(path: string, oldContent: string, newContent: string): 
   }
 }
 
-export async function spawnSubAgent(task: string): Promise<string> {
-  const readOnlyTools = createTools(async () => false)
+export async function spawnSubAgent(ctx: AgentContext, task: string): Promise<string> {
+  // Create a sub-agent context with read-only tools
+  const subCtx: AgentContext = {
+    ...ctx,
+    policy: 'read_only',
+    taskId: undefined, // Sub-agents are ephemeral
+  };
+  const readOnlyTools = createTools(subCtx)
     .filter(t => SUBAGENT_TOOLS.includes(t.function.name));
   let result;
   try {
@@ -181,12 +188,12 @@ export async function spawnSubAgent(task: string): Promise<string> {
   }
 }
 
-export function searchCodebase(pattern: string, path: string = '.', maxResults: number = 60): string {
+export function searchCodebase(ctx: AgentContext, pattern: string, path: string = '.', maxResults: number = 60): string {
   const inputPath = path && path.trim() ? path : '.';
   const cappedMax = Math.min(maxResults, 150);
   let resolvedPath: string;
   try {
-    resolvedPath = resolveSafePath(inputPath);
+    resolvedPath = resolveSafePath(inputPath, ctx.cwd);
   } catch (err: any) {
     return `ERROR: ${err.message}`;
   }
@@ -229,18 +236,3 @@ export function todoRead(sessionId: string): string {
     return `ERROR: ${err.message}`;
   }
 }
-
-export const toolExecutors: Record<string, (args: any) => string | Promise<string>> = {
-  run_bash: (args) => runBash(args.command),
-  read_file: (args) => readFile(args.path),
-  write_file: (args) => writeFile(args.path, args.content),
-  replace_string_in_file: (args) => editFile(args.path, args.stringToReplace, args.newString),
-  spawn_sub_agent: (args) => spawnSubAgent(args.task),
-  search_code: (args) => searchCodebase(args.pattern, args.path, args.maxResults),
-  git_status: (args) => gitStatus(),
-  git_diff: (args) => gitDiff(args.staged ?? false, args.paths ?? []),
-  git_add: (args) => gitAdd(args.paths),
-  git_commit: (args) => gitCommit(args.message),
-  todo_write: (args) => todoWrite(args.sessionId ?? '', args.todos),
-  todo_read: (args) => todoRead(args.sessionId ?? ''),
-};

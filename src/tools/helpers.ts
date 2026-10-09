@@ -14,11 +14,30 @@ export function deriveSessionTitle(firstMessage: string): string {
   return cleaned.length > 50 ? cleaned.slice(0, 50) + '…' : cleaned;
 }
 
-export function resolveSafePath(inputPath: string, cwd: string = process.cwd()): string {
+export function resolveSafePath(inputPath: string, cwd: string): string {
+  const fs = require('fs');
+  const resolvedCwd = path.resolve(cwd);
   const resolved = path.resolve(cwd, inputPath);
-  if (!resolved.startsWith(path.resolve(cwd) + path.sep) && resolved !== path.resolve(cwd)) {
+
+  // Check if path escapes the working directory
+  if (!resolved.startsWith(resolvedCwd + path.sep) && resolved !== resolvedCwd) {
     throw new Error(`Path "${inputPath}" resolves outside the working directory and is not allowed.`);
   }
+
+  // Check for symlink escape - verify real path is still inside cwd
+  try {
+    const realPath = fs.realpathSync(resolved);
+    const realCwd = fs.realpathSync(resolvedCwd);
+    if (!realPath.startsWith(realCwd + path.sep) && realPath !== realCwd) {
+      throw new Error(`Path "${inputPath}" escapes via symlink and is not allowed.`);
+    }
+  } catch (err: any) {
+    // If file doesn't exist yet, we can't check symlinks - allow it
+    if (err.code !== 'ENOENT') {
+      throw err;
+    }
+  }
+
   return resolved;
 }
 export const formatRgOutput = (output: string, maxTotalMatches = 60): string => {

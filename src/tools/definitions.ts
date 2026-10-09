@@ -3,10 +3,9 @@ import { tool } from '@openrouter/agent';
 import { z } from 'zod';
 import { runBash, readFile, writeFile, editFile, spawnSubAgent, searchCodebase, gitStatus, gitDiff, gitAdd, gitCommit } from './implementations.js';
 import { RISKY_TOOLS } from '../core/constants.js';
+import type { AgentContext } from '../core/context.js';
 
-export type OnConfirm = (description: string) => Promise<boolean>;
-
-export function createTools(onConfirm: OnConfirm) {
+export function createTools(ctx: AgentContext) {
   const runBashTool = tool({
     name: 'run_bash',
     description:
@@ -15,9 +14,15 @@ export function createTools(onConfirm: OnConfirm) {
       command: z.string().describe('A single shell command to execute, e.g. "ls -la" or "grep -rn TODO src/"'),
     }),
     execute: async ({ command }) => {
-      const allowed = await onConfirm(`run_bash(${command})`);
+      const allowed = await ctx.requestApproval({
+        tool: 'run_bash',
+        summary: `Execute: ${command}`,
+        risk: 'exec',
+        args: { command },
+        cwd: ctx.cwd,
+      });
       if (!allowed) return { error: 'User denied this action.' };
-      return { output: runBash(command) };
+      return { output: runBash(ctx, command) };
     },
   });
 
@@ -28,7 +33,7 @@ export function createTools(onConfirm: OnConfirm) {
     inputSchema: z.object({
       path: z.string().describe('Relative or absolute path to the file to read.'),
     }),
-    execute: async ({ path }) => ({ content: readFile(path) }),
+    execute: async ({ path }) => ({ content: readFile(ctx, path) }),
   });
 
   const writeFileTool = tool({
@@ -40,9 +45,15 @@ export function createTools(onConfirm: OnConfirm) {
       content: z.string().describe('The full content to write to the file, replacing anything already there.'),
     }),
     execute: async ({ path, content }) => {
-      const allowed = await onConfirm(`write_file(${path})`);
+      const allowed = await ctx.requestApproval({
+        tool: 'write_file',
+        summary: `Write file: ${path}`,
+        risk: 'write',
+        args: { path, content },
+        cwd: ctx.cwd,
+      });
       if (!allowed) return { error: 'User denied this action.' };
-      return { result: writeFile(path, content) };
+      return { result: writeFile(ctx, path, content) };
     },
   });
 
@@ -56,9 +67,15 @@ export function createTools(onConfirm: OnConfirm) {
       newString: z.string().describe('The text to replace it with.'),
     }),
     execute: async ({ path, stringToReplace, newString }) => {
-      const allowed = await onConfirm(`replace_string_in_file(${path})`);
+      const allowed = await ctx.requestApproval({
+        tool: 'replace_string_in_file',
+        summary: `Edit file: ${path}`,
+        risk: 'write',
+        args: { path, stringToReplace, newString },
+        cwd: ctx.cwd,
+      });
       if (!allowed) return { error: 'User denied this action.' };
-      return { result: editFile(path, stringToReplace, newString) };
+      return { result: editFile(ctx, path, stringToReplace, newString) };
     },
   });
 
@@ -69,7 +86,7 @@ export function createTools(onConfirm: OnConfirm) {
     inputSchema: z.object({
       task: z.string().describe('A clear, self-contained description of what the sub-agent should find/do and report back. It has no knowledge of the current conversation, so include all necessary context.'),
     }),
-    execute: async ({ task }) => ({ result: await spawnSubAgent(task) }),
+    execute: async ({ task }) => ({ result: await spawnSubAgent(ctx, task) }),
   });
 
   const searchCodeTool = tool({
@@ -87,7 +104,7 @@ export function createTools(onConfirm: OnConfirm) {
         ),
     }),
     execute: async ({ pattern, path, maxResults }) => ({
-      result: searchCodebase(pattern, path ?? '.', maxResults ?? 60),
+      result: searchCodebase(ctx, pattern, path ?? '.', maxResults ?? 60),
     }),
   });
 
@@ -96,7 +113,7 @@ export function createTools(onConfirm: OnConfirm) {
     description:
       'Show the current git repository status including branch, staged changes, unstaged changes, and untracked files. Run this before committing to see what has changed. Returns the raw `git status --porcelain=v1 --branch` output.',
     inputSchema: z.object({}),
-    execute: async () => ({ output: gitStatus() }),
+    execute: async () => ({ output: gitStatus(ctx) }),
   });
 
   const gitDiffTool = tool({
@@ -107,7 +124,7 @@ export function createTools(onConfirm: OnConfirm) {
       staged: z.boolean().optional().default(false).describe('Show staged changes instead of working tree changes.'),
       paths: z.array(z.string()).optional().describe('Limit diff to these file paths.'),
     }),
-    execute: async ({ staged, paths }) => ({ output: gitDiff(staged ?? false, paths ?? []) }),
+    execute: async ({ staged, paths }) => ({ output: gitDiff(ctx, staged ?? false, paths ?? []) }),
   });
 
   const gitAddTool = tool({
@@ -117,7 +134,7 @@ export function createTools(onConfirm: OnConfirm) {
     inputSchema: z.object({
       paths: z.array(z.string()).min(1).describe('File or directory paths to stage. Use ["."] to stage all changes explicitly.'),
     }),
-    execute: async ({ paths }) => ({ output: gitAdd(paths) }),
+    execute: async ({ paths }) => ({ output: gitAdd(ctx, paths) }),
   });
 
   const gitCommitTool = tool({
@@ -127,7 +144,7 @@ export function createTools(onConfirm: OnConfirm) {
     inputSchema: z.object({
       message: z.string().min(1).describe('Commit message (subject line + optional body).'),
     }),
-    execute: async ({ message }) => ({ output: gitCommit(message) }),
+    execute: async ({ message }) => ({ output: gitCommit(ctx, message) }),
   });
 
   return [

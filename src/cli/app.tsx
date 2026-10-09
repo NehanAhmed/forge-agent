@@ -12,8 +12,11 @@ import { randomUUID } from 'crypto';
 import { runAgent, type LogEvent } from './agent-cli.js';
 import { AGENT_NAME } from '../core/constants.js';
 import { getLatestSessionId, listSessions, saveSessionTitle, getSessionModel, CODING_MODELS, DEFAULT_MODEL_ID, getModelName, type ModelInfo } from '../core/index.js';
-import { listSessionMeta } from '../core/state.js';
+import { listSessionMeta, createStateAccessor } from '../core/state.js';
 import { ModelPickerModal } from './components/ModelPickerModal.js';
+import type { AgentContext, ApprovalRequest } from '../core/context.js';
+import { createBudget } from '../core/budget.js';
+import { getClient } from '../core/client.js';
 
 // --- config command: runs before anything else, exits early if matched ---
 const cliArgs = process.argv.slice(2);
@@ -264,11 +267,36 @@ function App() {
       }
     };
 
+    // Create AgentContext for this interactive session
+    const abortController = new AbortController();
+    const ctx: AgentContext = {
+      taskId: undefined, // Interactive session, not a task
+      cwd: process.cwd(),
+      signal: abortController.signal,
+      state: createStateAccessor(sessionId),
+      policy: 'ask',
+      budget: createBudget({ maxRequests: 1000, maxTokens: 10_000_000 }), // Generous limits for interactive
+      log: (entry) => {
+        // Map log entries to LogEvent format
+        if (entry.type === 'reasoning') {
+          onLog({ type: 'reasoning_delta', content: entry.content });
+        } else if (entry.type === 'assistant') {
+          onLog({ type: 'assistant_delta', content: entry.content });
+        } else {
+          onLog({ type: entry.type as any, content: entry.content });
+        }
+      },
+      requestApproval: async (req: ApprovalRequest) => {
+        return handleConfirm(`${req.tool}(${JSON.stringify(req.args)})`);
+      },
+      callModel: getClient().callModel.bind(getClient()),
+    };
+
     await runAgent(sessionId, trimmed, {
       onLog,
       onConfirm: handleConfirm,
       onUsage: usageLimit,
-    }, currentModelId);
+    }, ctx, currentModelId);
 
     setIsProcessing(false);
   }

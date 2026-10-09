@@ -6,7 +6,20 @@ import { compactIfNeeded, DEFAULT_COMPACTION_CONFIG } from './compaction.js';
 import { loadTodos, saveTodos, mergeTodosIntoState, extractTodosFromState, type TodoList } from './todos.js';
 type SessionMetaEntry = { id: string; title: string; createdAt: number; modelId?: string };
 
-const META_SESSION_DIR = path.join(process.cwd(), '.forge', 'meta');
+import os from 'os';
+
+// For backward compatibility: interactive sessions use project-local .agent-sessions
+// Task sessions will use ~/.forge/tasks/<taskId>/ (to be implemented in Phase 3)
+const getSessionsDir = (taskId?: string): string => {
+  if (taskId) {
+    // Task sessions use home directory
+    return path.join(os.homedir(), '.forge', 'tasks', taskId);
+  }
+  // Legacy interactive sessions use current directory
+  return path.join(process.cwd(), '.agent-sessions');
+};
+
+const META_SESSION_DIR = path.join(os.homedir(), '.forge', 'meta');
 const ensureMetaDir = () => {
   if (!fs.existsSync(META_SESSION_DIR)) {
     fs.mkdirSync(META_SESSION_DIR, { recursive: true });
@@ -21,24 +34,25 @@ export type SessionSummary = {
   status: string;
 };
 
-const SESSIONS_DIR = path.join(process.cwd(), '.agent-sessions');
-
-function ensureDir(): void {
-  if (!fs.existsSync(SESSIONS_DIR)) {
-    fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+function ensureDir(dir: string): void {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
 }
 
-function getStatePath(sessionId: string): string {
-  return path.join(SESSIONS_DIR, `${sessionId}.state.json`);
+function getStatePath(sessionId: string, stateDir?: string): string {
+  const dir = stateDir ?? getSessionsDir();
+  return path.join(dir, `${sessionId}.state.json`);
 }
 
 export function createStateAccessor(
   sessionId: string,
+  stateDir?: string,
   compactionConfig = DEFAULT_COMPACTION_CONFIG
 ): StateAccessor {
-  ensureDir();
-  const statePath = getStatePath(sessionId);
+  const dir = stateDir ?? getSessionsDir();
+  ensureDir(dir);
+  const statePath = getStatePath(sessionId, stateDir);
 
   return {
     load: async (): Promise<ConversationState | null> => {
@@ -66,13 +80,14 @@ export function createStateAccessor(
 }
 
 export function listSessions(): SessionSummary[] {
-  ensureDir();
-  const files = fs.readdirSync(SESSIONS_DIR).filter(f => f.endsWith('.state.json'));
+  const sessionsDir = getSessionsDir();
+  ensureDir(sessionsDir);
+  const files = fs.readdirSync(sessionsDir).filter(f => f.endsWith('.state.json'));
   const summaries: SessionSummary[] = [];
 
   for (const file of files) {
     try {
-      const state = JSON.parse(fs.readFileSync(path.join(SESSIONS_DIR, file), 'utf-8')) as ConversationState;
+      const state = JSON.parse(fs.readFileSync(path.join(sessionsDir, file), 'utf-8')) as ConversationState;
       summaries.push({
         id: state.id,
         updatedAt: state.updatedAt,

@@ -6,6 +6,7 @@ import { buildSystemPrompt, MAX_ITERATIONS, MODEL, SYSTEM_PROMPT } from '../core
 import { createStateAccessor, saveSessionTitle } from '../core/state.js';
 import { deriveSessionTitle } from '../tools/helpers.js';
 import { DEFAULT_MODEL_ID } from '../core/models.js';
+import type { AgentContext } from '../core/context.js';
 
 export type LogEvent =
   | { type: 'reasoning_delta'; content: string }
@@ -30,9 +31,10 @@ export async function runAgent(
   sessionId: string,
   userMessage: string,
   callbacks: Callbacks,
+  ctx: AgentContext,
   modelId: string = DEFAULT_MODEL_ID
 ): Promise<ConversationState> {
-  const tools = createTools(callbacks.onConfirm);
+  const tools = createTools(ctx);
   const stateAccessor = createStateAccessor(sessionId);
 
   const priorState = await stateAccessor.load();
@@ -41,7 +43,7 @@ export async function runAgent(
   try {
     result = getClient().callModel({
       model: modelId,
-      instructions: buildSystemPrompt(process.cwd()),
+      instructions: buildSystemPrompt(ctx.cwd),
       input: userMessage,
       tools,
       stopWhen: [stepCountIs(MAX_ITERATIONS)],
