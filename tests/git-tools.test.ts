@@ -1,12 +1,14 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
-import { rmSync, mkdirSync, writeFileSync } from 'fs';
+import { rmSync, mkdirSync, writeFileSync, mkdtempSync } from 'fs';
 import { join } from 'path';
+import os from 'os';
 import { execSync } from 'child_process';
 import { gitStatus, gitDiff, gitAdd, gitCommit } from '../src/tools/implementations.js';
+import type { AgentContext } from '../src/core/context.js';
+import { createBudget } from '../src/core/budget.js';
 
 const TEST_REPO = join(process.cwd(), 'tests', 'temp-git-repo');
-let originalCwd: string;
 
 function runInTestRepo(command: string): string {
   try {
@@ -31,20 +33,31 @@ function cleanupTestRepo() {
   rmSync(TEST_REPO, { recursive: true, force: true });
 }
 
+function makeCtx(cwd = TEST_REPO): AgentContext {
+  return {
+    taskId: 'test-git',
+    cwd,
+    signal: new AbortController().signal,
+    state: { load: async () => null, save: async () => {} },
+    policy: 'ask',
+    budget: createBudget(),
+    log: () => {},
+    requestApproval: async () => true,
+    callModel: (() => {}) as any,
+  };
+}
+
 describe('git tools', () => {
   beforeEach(() => {
-    originalCwd = process.cwd();
     setupTestRepo();
-    process.chdir(TEST_REPO);
   });
 
   afterEach(() => {
-    process.chdir(originalCwd);
     cleanupTestRepo();
   });
 
   test('git_status shows clean repo', () => {
-    const output = gitStatus();
+    const output = gitStatus(makeCtx());
     assert.ok(output.match(/^## (main|master)/));
     assert.ok(!output.includes('?'));
     assert.ok(!output.includes('M'));
@@ -52,47 +65,43 @@ describe('git tools', () => {
 
   test('git_status shows unstaged changes', () => {
     writeFileSync(join(TEST_REPO, 'README.md'), '# Test Repo\n\nModified content.\n');
-    const output = gitStatus();
+    const output = gitStatus(makeCtx());
     assert.ok(output.includes('M README.md') || output.includes(' M README.md'));
   });
 
   test('git_status shows untracked files', () => {
     writeFileSync(join(TEST_REPO, 'new-file.txt'), 'untracked');
-    const output = gitStatus();
+    const output = gitStatus(makeCtx());
     assert.ok(output.includes('?? new-file.txt'));
   });
 
   test('git_status fails outside git repo', () => {
-    const nonRepo = join(originalCwd, '..', 'non-repo-test');
-    rmSync(nonRepo, { recursive: true, force: true });
-    mkdirSync(nonRepo, { recursive: true });
+    const nonRepo = mkdtempSync(join(os.tmpdir(), 'non-repo-test-'));
     try {
-      process.chdir(nonRepo);
-      const output = gitStatus();
+      const output = gitStatus(makeCtx(nonRepo));
       assert.ok(output.startsWith('ERROR: Not a git repository'));
     } finally {
-      process.chdir(TEST_REPO);
       rmSync(nonRepo, { recursive: true, force: true });
     }
   });
 
   test('git_diff shows unstaged changes', () => {
     writeFileSync(join(TEST_REPO, 'README.md'), '# Test Repo\n\nModified content.\n');
-    const output = gitDiff(false);
+    const output = gitDiff(makeCtx(), false);
     assert.ok(output.includes('Modified content') || output.includes('+Modified content'));
   });
 
   test('git_diff staged:true shows staged changes', () => {
     writeFileSync(join(TEST_REPO, 'README.md'), '# Test Repo\n\nModified content.\n');
     runInTestRepo('git add README.md');
-    const output = gitDiff(true);
+    const output = gitDiff(makeCtx(), true);
     assert.ok(output.includes('Modified content') || output.includes('+Modified content'));
   });
 
   test('git_diff with paths filters output', () => {
     writeFileSync(join(TEST_REPO, 'README.md'), '# Test Repo\n\nModified content.\n');
     writeFileSync(join(TEST_REPO, 'other.txt'), 'other');
-    const output = gitDiff(false, ['README.md']);
+    const output = gitDiff(makeCtx(), false, ['README.md']);
     assert.ok(output.includes('README.md'));
     assert.ok(!output.includes('other.txt'));
   });
@@ -103,75 +112,75 @@ describe('git tools', () => {
     runInTestRepo('git add large.txt');
     runInTestRepo('git commit -m "Add large file"');
     writeFileSync(join(TEST_REPO, 'large.txt'), 'y'.repeat(60_000));
-    const output = gitDiff(false, ['large.txt']);
+    const output = gitDiff(makeCtx(), false, ['large.txt']);
     assert.ok(output.includes('[Output truncated at 50000 characters'));
   });
 
   test('git_add stages a file', () => {
     writeFileSync(join(TEST_REPO, 'new.txt'), 'new file');
-    const output = gitAdd(['new.txt']);
+    const output = gitAdd(makeCtx(), ['new.txt']);
     assert.ok(output.includes('Staged 1 file(s)'));
-    const status = gitStatus();
+    const status = gitStatus(makeCtx());
     assert.ok(status.includes('A  new.txt') || status.includes('A new.txt') || status.includes('A\tnew.txt'));
   });
 
   test('git_add stages multiple files', () => {
     writeFileSync(join(TEST_REPO, 'a.txt'), 'a');
     writeFileSync(join(TEST_REPO, 'b.txt'), 'b');
-    const output = gitAdd(['a.txt', 'b.txt']);
+    const output = gitAdd(makeCtx(), ['a.txt', 'b.txt']);
     assert.ok(output.includes('Staged 2 file(s)'));
   });
 
   test('git_add rejects empty paths array', () => {
-    const output = gitAdd([]);
+    const output = gitAdd(makeCtx(), []);
     assert.ok(output.startsWith('ERROR: At least one path is required'));
   });
 
   test('git_add rejects nonexistent path', () => {
-    const output = gitAdd(['nonexistent.txt']);
+    const output = gitAdd(makeCtx(), ['nonexistent.txt']);
     assert.ok(output.startsWith('ERROR:'));
   });
 
   test('git_add rejects path outside repo', () => {
-    const output = gitAdd(['../outside.txt']);
+    const output = gitAdd(makeCtx(), ['../outside.txt']);
     assert.ok(output.startsWith('ERROR:'));
   });
 
   test('git_add handles filename starting with dash', () => {
     writeFileSync(join(TEST_REPO, '-dash.txt'), 'dash file');
-    const output = gitAdd(['-dash.txt']);
+    const output = gitAdd(makeCtx(), ['-dash.txt']);
     assert.ok(output.includes('Staged 1 file(s)') || output.startsWith('ERROR:'));
   });
 
   test('git_add warns on secret-like files', () => {
     writeFileSync(join(TEST_REPO, '.env'), 'SECRET=123');
-    const output = gitAdd(['.env']);
+    const output = gitAdd(makeCtx(), ['.env']);
     assert.ok(output.includes('Warning: Staging potentially sensitive file'));
   });
 
   test('git_commit rejects empty message', () => {
     writeFileSync(join(TEST_REPO, 'test.txt'), 'test');
     runInTestRepo('git add test.txt');
-    const output = gitCommit('');
+    const output = gitCommit(makeCtx(), '');
     assert.ok(output.startsWith('ERROR: Commit message cannot be empty'));
   });
 
   test('git_commit rejects whitespace-only message', () => {
     writeFileSync(join(TEST_REPO, 'test.txt'), 'test');
     runInTestRepo('git add test.txt');
-    const output = gitCommit('   \n\t  ');
+    const output = gitCommit(makeCtx(), '   \n\t  ');
     assert.ok(output.startsWith('ERROR: Commit message cannot be empty'));
   });
 
   test('git_commit rejects when nothing staged', () => {
-    const output = gitCommit('Test commit');
+    const output = gitCommit(makeCtx(), 'Test commit');
     assert.ok(output.startsWith('ERROR: Nothing staged to commit'));
   });
 
   test('git_commit creates commit with staged files', () => {
     writeFileSync(join(TEST_REPO, 'commit-test.txt'), 'commit test');
     runInTestRepo('git add commit-test.txt');
-    const output = gitCommit('Add commit-test.txt');
+    const output = gitCommit(makeCtx(), 'Add commit-test.txt');
     assert.ok(output.includes('Committed'));
     assert.ok(output.includes('commit-test.txt'));
     // Verify commit exists
@@ -183,50 +192,46 @@ describe('git tools', () => {
     writeFileSync(join(TEST_REPO, 'staged.txt'), 'staged');
     writeFileSync(join(TEST_REPO, 'unstaged.txt'), 'unstaged');
     runInTestRepo('git add staged.txt');
-    const output = gitCommit('Add staged only');
+    const output = gitCommit(makeCtx(), 'Add staged only');
     assert.ok(output.includes('staged.txt'));
     assert.ok(!output.includes('unstaged.txt'));
     // Verify unstaged.txt is still unstaged
-    const status = gitStatus();
+    const status = gitStatus(makeCtx());
     assert.ok(status.includes('?? unstaged.txt') || status.includes('??\tunstaged.txt'));
   });
 
   test('git_commit fails outside git repo', () => {
-    const nonRepo = join(originalCwd, '..', 'non-repo-test2');
-    rmSync(nonRepo, { recursive: true, force: true });
-    mkdirSync(nonRepo, { recursive: true });
+    const nonRepo = mkdtempSync(join(os.tmpdir(), 'non-repo-test2-'));
     writeFileSync(join(nonRepo, 'test.txt'), 'test');
     try {
-      process.chdir(nonRepo);
-      runInTestRepo('git add test.txt'); // This will fail but we don't care
-      const output = gitCommit('Test commit');
+      const output = gitCommit(makeCtx(nonRepo), 'Test commit');
       assert.ok(output.startsWith('ERROR: Not a git repository'));
     } finally {
-      process.chdir(TEST_REPO);
       rmSync(nonRepo, { recursive: true, force: true });
     }
   });
 
   test('git tools work end-to-end: edit, status, diff, add, commit, status clean', () => {
+    const ctx = makeCtx();
     // Edit a file
     writeFileSync(join(TEST_REPO, 'README.md'), '# Test Repo\n\nUpdated content.\n');
     // Check status
-    let status = gitStatus();
+    let status = gitStatus(ctx);
     assert.ok(status.includes('M README.md') || status.includes(' M README.md'));
     // Check diff
-    let diff = gitDiff(false);
+    let diff = gitDiff(ctx, false);
     assert.ok(diff.includes('Updated content'));
     // Stage the file
-    let addOutput = gitAdd(['README.md']);
+    let addOutput = gitAdd(ctx, ['README.md']);
     assert.ok(addOutput.includes('Staged 1 file(s)'));
     // Check staged diff
-    diff = gitDiff(true);
+    diff = gitDiff(ctx, true);
     assert.ok(diff.includes('Updated content'));
     // Commit
-    const commitOutput = gitCommit('Update README content');
+    const commitOutput = gitCommit(ctx, 'Update README content');
     assert.ok(commitOutput.includes('Committed'));
     // Final status should be clean
-    status = gitStatus();
+    status = gitStatus(ctx);
     assert.ok(status.match(/^## (main|master)/));
     assert.ok(!status.includes('M'));
     assert.ok(!status.includes('?'));

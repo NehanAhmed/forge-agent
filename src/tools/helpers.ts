@@ -1,4 +1,5 @@
 import path from "path";
+import fs from "fs";
 
 type RgEvent = {
   type: 'begin' | 'match' | 'context' | 'end' | 'summary';
@@ -14,20 +15,27 @@ export function deriveSessionTitle(firstMessage: string): string {
   return cleaned.length > 50 ? cleaned.slice(0, 50) + '…' : cleaned;
 }
 
+function normalizeForCompare(p: string): string {
+  const resolved = path.resolve(p);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
 export function resolveSafePath(inputPath: string, cwd: string): string {
-  const fs = require('fs');
   const resolvedCwd = path.resolve(cwd);
   const resolved = path.resolve(cwd, inputPath);
 
+  const normCwd = normalizeForCompare(resolvedCwd);
+  const normResolved = normalizeForCompare(resolved);
+
   // Check if path escapes the working directory
-  if (!resolved.startsWith(resolvedCwd + path.sep) && resolved !== resolvedCwd) {
+  if (!normResolved.startsWith(normCwd + path.sep) && normResolved !== normCwd) {
     throw new Error(`Path "${inputPath}" resolves outside the working directory and is not allowed.`);
   }
 
   // Check for symlink escape - verify real path is still inside cwd
   try {
-    const realPath = fs.realpathSync(resolved);
-    const realCwd = fs.realpathSync(resolvedCwd);
+    const realPath = normalizeForCompare(fs.realpathSync(resolved));
+    const realCwd = normalizeForCompare(fs.realpathSync(resolvedCwd));
     if (!realPath.startsWith(realCwd + path.sep) && realPath !== realCwd) {
       throw new Error(`Path "${inputPath}" escapes via symlink and is not allowed.`);
     }

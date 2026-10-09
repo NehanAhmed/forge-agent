@@ -4,3 +4,12 @@ dist/
 .agent-sessions/
 evals/
 .env
+
+# Ignore Forge task engine state
+.agent/
+.agent/**
+.agent/worktrees/
+.agent/worktrees/**
+.agent/tasks.json
+.agent/tasks/
+.agent/tasks/**

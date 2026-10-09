@@ -1,3 +1,4 @@
+import path from 'path';
 import type { AgentContext, RiskClass, ApprovalRequest } from './context.js';
 
 // Shell command allowlist for auto_in_worktree policy
@@ -45,11 +46,10 @@ export function isAllowlistedCommand(command: string): boolean {
   );
 }
 
-export function isPathInside(path: string, parentPath: string): boolean {
-  const pathModule = require('path');
-  const resolvedPath = pathModule.resolve(path);
-  const resolvedParent = pathModule.resolve(parentPath);
-  return resolvedPath.startsWith(resolvedParent + pathModule.sep) || resolvedPath === resolvedParent;
+export function isPathInside(targetPath: string, parentPath: string): boolean {
+  const resolvedPath = path.resolve(targetPath);
+  const resolvedParent = path.resolve(parentPath);
+  return resolvedPath.startsWith(resolvedParent + path.sep) || resolvedPath === resolvedParent;
 }
 
 export async function executeWithPolicy(

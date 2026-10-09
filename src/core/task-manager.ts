@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import { randomBytes } from 'crypto';
+import fs from 'fs';
 import type { Task, TaskStatus, Isolation } from './task.js';
 import { createTask, validateStatusTransition, isValidTransition } from './task.js';
 import type { ApprovalPolicy, LogEntry, ApprovalRequest, AgentContext, Budget } from './context.js';
@@ -72,11 +73,13 @@ export class TaskManager extends EventEmitter {
   private concurrency: number;
   private rateLimitedUntil: number | null = null;
   private repoCwd: string;
+  private customCallModel?: any;
 
-  constructor(opts: { concurrency?: number; repoCwd?: string } = {}) {
+  constructor(opts: { concurrency?: number; repoCwd?: string; callModel?: any } = {}) {
     super();
     this.concurrency = opts.concurrency ?? 2;
     this.repoCwd = opts.repoCwd ?? process.cwd();
+    this.customCallModel = opts.callModel;
     this.load();
 
     // Detect orphaned worktrees on startup
@@ -123,7 +126,6 @@ export class TaskManager extends EventEmitter {
 
       // Check worktree still exists
       if (task.worktree && task.reviewState !== 'merged' && task.reviewState !== 'discarded') {
-        const fs = require('fs');
         if (!fs.existsSync(task.worktree.path)) {
           task.reviewState = 'needs_attention';
           task.error = {
@@ -393,7 +395,7 @@ export class TaskManager extends EventEmitter {
         budget,
         log: (entry) => this.log(taskId, entry),
         requestApproval: (req) => this.requestApproval(taskId, req),
-        callModel: getClient().callModel.bind(getClient()),
+        callModel: this.customCallModel ?? getClient().callModel.bind(getClient()),
       };
 
       // Run the agent headlessly
