@@ -118,6 +118,16 @@ export function runBash(ctx: AgentContext, command: string): string {
   // intercept. It stays a RISKY_TOOL requiring confirmation; true sandboxing
   // would need a real subprocess jail (e.g. a restricted PATH/cwd + denylist
   // of dangerous patterns), which is a separate, bigger piece of work.
+  //
+  // ABORT LIMITATION: execSync cannot be interrupted mid-execution. For proper
+  // abort support, the task manager will need to kill the entire process tree
+  // when cancelling a task. Individual tool-level abort is not feasible with
+  // synchronous execution.
+
+  if (ctx.signal.aborted) {
+    return 'ERROR: Operation cancelled';
+  }
+
   try {
     return execSync(command, { encoding: 'utf-8', timeout: 10_000, cwd: ctx.cwd });
   } catch (err: any) {

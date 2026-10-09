@@ -48,6 +48,7 @@ export async function runAgent(
       tools,
       stopWhen: [stepCountIs(MAX_ITERATIONS)],
       state: stateAccessor,
+      signal: ctx.signal,
     });
   } catch (err: any) {
     const errMsg = err?.error?.message ?? err?.message ?? String(err);
