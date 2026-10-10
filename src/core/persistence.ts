@@ -9,25 +9,25 @@ export interface TaskIndex {
   tasks: Task[];
 }
 
-const TASK_INDEX_VERSION = 1;
-const TASKS_DIR = path.join(os.homedir(), '.forge', 'tasks');
+const TASK_INDEX_VERSION = 2;
+const DEFAULT_TASKS_DIR = path.join(os.homedir(), '.forge', 'tasks');
 
-function ensureTasksDir(): void {
-  if (!fs.existsSync(TASKS_DIR)) {
-    fs.mkdirSync(TASKS_DIR, { recursive: true });
+function ensureTasksDir(dir = DEFAULT_TASKS_DIR): void {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
 }
 
-function getTaskIndexPath(): string {
-  return path.join(TASKS_DIR, 'tasks.json');
+function getTaskIndexPath(dir = DEFAULT_TASKS_DIR): string {
+  return path.join(dir, 'tasks.json');
 }
 
-function getTaskLogPath(taskId: string): string {
-  return path.join(TASKS_DIR, `${taskId}.log.jsonl`);
+function getTaskLogPath(taskId: string, dir = DEFAULT_TASKS_DIR): string {
+  return path.join(dir, `${taskId}.log.jsonl`);
 }
 
-function getTaskDir(taskId: string): string {
-  return path.join(TASKS_DIR, taskId);
+function getTaskDir(taskId: string, dir = DEFAULT_TASKS_DIR): string {
+  return path.join(dir, taskId);
 }
 
 // Atomic write: write to temp file, then rename
@@ -45,9 +45,10 @@ function atomicWrite(filePath: string, content: string): void {
   }
 }
 
-export function loadTaskIndex(): TaskIndex | null {
-  ensureTasksDir();
-  const indexPath = getTaskIndexPath();
+export function loadTaskIndex(tasksDir?: string): TaskIndex | null {
+  const dir = tasksDir ?? DEFAULT_TASKS_DIR;
+  ensureTasksDir(dir);
+  const indexPath = getTaskIndexPath(dir);
 
   if (!fs.existsSync(indexPath)) {
     return null;
@@ -58,63 +59,65 @@ export function loadTaskIndex(): TaskIndex | null {
     const parsed = JSON.parse(data) as TaskIndex;
 
     if (parsed.version !== TASK_INDEX_VERSION) {
-      console.warn(`[persistence] Task index version mismatch (expected ${TASK_INDEX_VERSION}, got ${parsed.version})`);
-      // Back up old version
-      const backupPath = `${indexPath}.v${parsed.version}.backup`;
-      fs.copyFileSync(indexPath, backupPath);
+      if (parsed.version === 1) {
+        // Migration: V1 to V2 (add treeId and displayId)
+        let rootCount = 0;
+        for (const task of parsed.tasks) {
+          if (!task.parentId) {
+            rootCount++;
+            task.displayId = rootCount.toString();
+            task.treeId = task.id;
+            task.depth = 0;
+          }
+        }
+        for (const task of parsed.tasks) {
+          if (task.parentId && !task.displayId) {
+            const parent = parsed.tasks.find(t => t.id === task.parentId);
+            const siblings = parsed.tasks.filter(t => t.parentId === task.parentId && t.displayId);
+            task.treeId = parent?.treeId ?? task.id;
+            task.depth = (parent?.depth ?? 0) + 1;
+            task.displayId = `${parent?.displayId ?? '0'}.${siblings.length + 1}`;
+          }
+        }
+        parsed.version = 2;
+        return parsed;
+      }
       return null;
     }
-
     return parsed;
   } catch (err: any) {
-    console.error(`[persistence] Failed to load task index: ${err.message}`);
-
-    // Back up corrupt file
-    const backupPath = `${indexPath}.corrupt.${Date.now()}`;
-    try {
-      fs.copyFileSync(indexPath, backupPath);
-      console.warn(`[persistence] Corrupt index backed up to ${backupPath}`);
-    } catch {
-      // Ignore backup errors
-    }
-
     return null;
   }
 }
 
-export function saveTaskIndex(index: TaskIndex): void {
-  ensureTasksDir();
-  const indexPath = getTaskIndexPath();
+export function saveTaskIndex(index: TaskIndex, tasksDir?: string): void {
+  const dir = tasksDir ?? DEFAULT_TASKS_DIR;
+  ensureTasksDir(dir);
+  const indexPath = getTaskIndexPath(dir);
   const content = JSON.stringify(index, null, 2);
   atomicWrite(indexPath, content);
 }
 
-export function appendTaskLog(taskId: string, entry: LogEntry): void {
-  ensureTasksDir();
-  const logPath = getTaskLogPath(taskId);
+export function appendTaskLog(taskId: string, entry: LogEntry, tasksDir?: string): void {
+  const dir = tasksDir ?? DEFAULT_TASKS_DIR;
+  ensureTasksDir(dir);
+  const logPath = getTaskLogPath(taskId, dir);
   const line = JSON.stringify(entry) + '\n';
-
   try {
     fs.appendFileSync(logPath, line, 'utf-8');
-  } catch (err: any) {
-    console.error(`[persistence] Failed to append to task log ${taskId}: ${err.message}`);
-  }
+  } catch {}
 }
 
 export function loadTaskLog(
   taskId: string,
-  opts: { fromSeq?: number; limit?: number } = {}
+  opts: { fromSeq?: number; limit?: number; tasksDir?: string } = {}
 ): LogEntry[] {
-  const logPath = getTaskLogPath(taskId);
-
-  if (!fs.existsSync(logPath)) {
-    return [];
-  }
-
+  const dir = opts.tasksDir ?? DEFAULT_TASKS_DIR;
+  const logPath = getTaskLogPath(taskId, dir);
+  if (!fs.existsSync(logPath)) return [];
   try {
     const data = fs.readFileSync(logPath, 'utf-8');
     const lines = data.trim().split('\n').filter(Boolean);
-
     let entries: LogEntry[] = [];
     for (const line of lines) {
       try {
@@ -122,32 +125,24 @@ export function loadTaskLog(
         if (opts.fromSeq === undefined || entry.seq >= opts.fromSeq) {
           entries.push(entry);
         }
-      } catch {
-        // Skip malformed lines
-        continue;
-      }
+      } catch { continue; }
     }
-
-    // Apply limit
     if (opts.limit && entries.length > opts.limit) {
       entries = entries.slice(-opts.limit);
     }
-
     return entries;
-  } catch (err: any) {
-    console.error(`[persistence] Failed to load task log ${taskId}: ${err.message}`);
-    return [];
-  }
+  } catch { return []; }
 }
 
-export function ensureTaskDir(taskId: string): string {
-  const dir = getTaskDir(taskId);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+export function ensureTaskDir(taskId: string, tasksDir?: string): string {
+  const dir = tasksDir ?? DEFAULT_TASKS_DIR;
+  const taskDir = getTaskDir(taskId, dir);
+  if (!fs.existsSync(taskDir)) {
+    fs.mkdirSync(taskDir, { recursive: true });
   }
-  return dir;
+  return taskDir;
 }
 
-export function getTaskStateDir(taskId: string): string {
-  return ensureTaskDir(taskId);
+export function getTaskStateDir(taskId: string, tasksDir?: string): string {
+  return ensureTaskDir(taskId, tasksDir);
 }

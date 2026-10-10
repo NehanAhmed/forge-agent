@@ -345,6 +345,28 @@ function App() {
   );
 }
 
-render(<App />);
+import { Dashboard } from './components/dashboard/Dashboard.js';
+import { TaskManager } from '../core/task-manager.js';
+import { InProcessTaskClient } from '../core/task-client.js';
+
+function DashboardApp() {
+  const managerRef = useRef<TaskManager | null>(null);
+  const clientRef = useRef<InProcessTaskClient | null>(null);
+
+  if (!managerRef.current) {
+    managerRef.current = new TaskManager();
+    clientRef.current = new InProcessTaskClient(managerRef.current);
+  }
+
+  return <Dashboard client={clientRef.current!} />;
+}
+
+// Check if we should run dashboard or chat
+const isChat = cliArgs.includes('chat');
+if (isChat) {
+  render(<App />);
+} else {
+  render(<DashboardApp />);
+}
 
 export { App };

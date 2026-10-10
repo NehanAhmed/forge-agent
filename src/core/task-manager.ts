@@ -3,7 +3,9 @@ import { randomBytes } from 'crypto';
 import fs from 'fs';
 import type { Task, TaskStatus, Isolation } from './task.js';
 import { createTask, validateStatusTransition, isValidTransition } from './task.js';
+import { assignDisplayId, descendantsOf, childrenOf, treeSize, enforceSpawnLimits, stricterPolicy } from './tree.js';
 import type { ApprovalPolicy, LogEntry, ApprovalRequest, AgentContext, Budget } from './context.js';
+import type { TaskUsage, TaskError } from './task.js';
 import {
   loadTaskIndex,
   saveTaskIndex,
@@ -65,7 +67,7 @@ export class TaskManager extends EventEmitter {
   private saveDebounceTimer: NodeJS.Timeout | null = null;
   private readonly LOG_BUFFER_SIZE = 2000;
   private readonly SAVE_DEBOUNCE_MS = 500;
-
+  
   // Queue management
   private queue: string[] = []; // Task IDs waiting to run
   private running = new Set<string>(); // Task IDs currently running
@@ -74,12 +76,26 @@ export class TaskManager extends EventEmitter {
   private rateLimitedUntil: number | null = null;
   private repoCwd: string;
   private customCallModel?: any;
+  private treeLimits: { maxDepth: number; maxChildrenPerTask: number; maxTasksPerTree: number };
+  private treeBudgets = new Map<string, Budget>();
+  private waitingOnChildren = new Map<string, Set<string>>(); // parent -> child ids
+  private waitingResolvers = new Map<string, () => void>(); // parent -> resume resolver
+  private writeLocks = new Map<string, string>(); // cwd -> taskId
+  private suspended = new Set<string>(); // parents waiting on children (subset of running)
 
-  constructor(opts: { concurrency?: number; repoCwd?: string; callModel?: any } = {}) {
+  private tasksDir?: string;
+
+  constructor(opts: { concurrency?: number; repoCwd?: string; callModel?: any; tasksDir?: string; treeLimits?: { maxDepth: number; maxChildrenPerTask: number; maxTasksPerTree: number } } = {}) {
     super();
     this.concurrency = opts.concurrency ?? 2;
     this.repoCwd = opts.repoCwd ?? process.cwd();
     this.customCallModel = opts.callModel;
+    this.tasksDir = opts.tasksDir;
+    this.treeLimits = opts.treeLimits ?? {
+      maxDepth: 2,
+      maxChildrenPerTask: 4,
+      maxTasksPerTree: 10,
+    };
     this.load();
 
     // Detect orphaned worktrees on startup
@@ -94,7 +110,7 @@ export class TaskManager extends EventEmitter {
   }
 
   private load(): void {
-    const index = loadTaskIndex();
+    const index = loadTaskIndex(this.tasksDir);
     if (!index) {
       return;
     }
@@ -138,6 +154,23 @@ export class TaskManager extends EventEmitter {
 
     // Save reconciled state
     this.scheduleSave();
+
+    // Restore tree budgets from persisted usage
+    for (const task of this.tasks.values()) {
+      if (!task.parentId) {
+        this.treeBudgets.set(task.treeId, createBudget({
+          maxRequests: 60,
+          maxTokens: 1_000_000,
+          maxCost: undefined,
+        }));
+        const budget = this.treeBudgets.get(task.treeId)!;
+        budget.record({
+          tokens: (task.usage?.inputTokens ?? 0) + (task.usage?.outputTokens ?? 0),
+          cost: task.usage?.cost ?? 0,
+          requests: task.usage?.requests ?? 0,
+        });
+      }
+    }
   }
 
   private scheduleSave(): void {
@@ -153,11 +186,11 @@ export class TaskManager extends EventEmitter {
 
   private save(): void {
     const index: TaskIndex = {
-      version: 1,
+      version: 2,
       tasks: Array.from(this.tasks.values()),
     };
 
-    saveTaskIndex(index);
+    saveTaskIndex(index, this.tasksDir);
   }
 
   private generateTaskId(): string {
@@ -177,12 +210,25 @@ export class TaskManager extends EventEmitter {
 
     const id = this.generateTaskId();
     const sessionId = id; // Each task has its own session
+    const allTasks = Array.from(this.tasks.values());
+    const displayId = assignDisplayId(allTasks);
+
     const task = createTask(id, goal, {
       sessionId,
       cwd: opts.cwd,
       isolation: opts.isolation ?? 'worktree',
       policy: opts.policy ?? 'ask',
+      depth: 0,
+      treeId: id,
+      displayId,
     });
+
+    const budget = opts.budget ?? createBudget({
+      maxRequests: 60,
+      maxTokens: 1_000_000,
+      maxCost: undefined,
+    });
+    this.treeBudgets.set(id, budget);
 
     // Downgrade auto_in_worktree to ask if isolation is shared
     if (task.policy === 'auto_in_worktree' && task.isolation === 'shared') {
@@ -208,6 +254,153 @@ export class TaskManager extends EventEmitter {
 
   get(id: string): Task | undefined {
     return this.tasks.get(id);
+  }
+
+  async spawnChild(parentId: string, goal: string, readOnly?: boolean): Promise<{ id: string; displayId: string }> {
+    const parent = this.tasks.get(parentId);
+    if (!parent) {
+      throw new Error(`Parent task not found: ${parentId}`);
+    }
+
+    const allTasks = Array.from(this.tasks.values());
+    const limits = enforceSpawnLimits(allTasks, parent, this.treeLimits, parent.depth + 1);
+    if (!limits.ok) {
+      throw new Error(limits.error!);
+    }
+
+    const displayId = assignDisplayId(allTasks, parentId);
+    const treeId = parent.treeId;
+
+    let policy: ApprovalPolicy = parent.policy;
+    if (readOnly) {
+      policy = 'read_only';
+    } else {
+      policy = stricterPolicy(parent.policy, 'ask') as ApprovalPolicy;
+    }
+
+    const id = this.generateTaskId();
+    const task = createTask(id, goal, {
+      sessionId: id,
+      cwd: parent.cwd,
+      isolation: parent.isolation,
+      policy,
+      parentId,
+      depth: parent.depth + 1,
+      treeId,
+      displayId,
+    });
+
+    if (readOnly) {
+      task.isolation = 'shared';
+    }
+
+    this.tasks.set(id, task);
+    this.logs.set(id, []);
+    this.logSeq.set(id, 0);
+
+    this.queue.push(id);
+
+    this.scheduleSave();
+    this.emit('task:created', { taskId: id, task });
+
+    this.processQueue();
+
+    return { id, displayId };
+  }
+
+  async waitForChildren(parentId: string, childIds: string[], timeoutMs?: number): Promise<Array<{ id: string; status: TaskStatus; summary?: string; error?: TaskError }>> {
+    const parent = this.tasks.get(parentId);
+    if (!parent) {
+      throw new Error(`Parent task not found: ${parentId}`);
+    }
+
+    // Validate all ids are descendants
+    for (const cid of childIds) {
+      const child = this.tasks.get(cid);
+      if (!child || child.parentId !== parentId) {
+        throw new Error(`Task ${cid} is not a child of ${parentId}`);
+      }
+    }
+
+    const allDone = () => childIds.every(cid => {
+      const t = this.tasks.get(cid);
+      return t && (t.status === 'done' || t.status === 'failed' || t.status === 'cancelled');
+    });
+
+    if (allDone()) {
+      return childIds.map(cid => {
+        const t = this.tasks.get(cid)!;
+        return { id: cid, status: t.status, summary: t.summary, error: t.error };
+      });
+    }
+
+    // Register parent as waiting
+    this.waitingOnChildren.set(parentId, new Set(childIds));
+
+    return new Promise((resolve) => {
+      const check = () => {
+        if (allDone()) {
+          resolve(childIds.map(cid => {
+            const t = this.tasks.get(cid)!;
+            return { id: cid, status: t.status, summary: t.summary, error: t.error };
+          }));
+        } else if (timeoutMs) {
+          resolve(childIds.map(cid => {
+            const t = this.tasks.get(cid)!;
+            return { id: cid, status: t.status, summary: t.summary, error: t.error };
+          }));
+        }
+      };
+
+      // Polling fallback with a small interval
+      const interval = setInterval(() => {
+        if (allDone()) {
+          clearInterval(interval);
+          this.waitingOnChildren.delete(parentId);
+          check();
+        }
+      }, 100);
+      interval.unref();
+
+
+      // Timeout handler
+      if (timeoutMs) {
+        setTimeout(() => {
+          if (this.waitingOnChildren.has(parentId)) {
+            clearInterval(interval);
+            this.waitingOnChildren.delete(parentId);
+            check();
+          }
+        }, timeoutMs);
+      }
+    });
+  }
+
+  async getDescendant(parentId: string, id: string): Promise<{ id: string; status: TaskStatus; usage: TaskUsage; summary?: string; error?: TaskError } | undefined> {
+    const parent = this.tasks.get(parentId);
+    if (!parent) throw new Error(`Parent task not found: ${parentId}`);
+
+    const child = this.tasks.get(id);
+    if (!child || child.parentId !== parentId) {
+      throw new Error(`Task ${id} is not a child of ${parentId}`);
+    }
+
+    return {
+      id: child.id,
+      status: child.status,
+      usage: child.usage,
+      summary: child.summary,
+      error: child.error,
+    };
+  }
+
+  getTreeBudget(treeId: string): Budget | undefined {
+    return this.treeBudgets.get(treeId);
+  }
+
+  createTreeBudget(limits: { maxTokens?: number; maxCost?: number; maxRequests?: number }): Budget {
+    const budget = createBudget(limits);
+    return budget;
   }
 
   list(filter?: { status?: TaskStatus[] }): Task[] {
@@ -272,46 +465,66 @@ export class TaskManager extends EventEmitter {
   }
 
   async cancel(id: string): Promise<void> {
-    const task = this.tasks.get(id);
-    if (!task) {
+    const rootTask = this.tasks.get(id);
+    if (!rootTask) {
       throw new Error(`Task not found: ${id}`);
     }
 
-    if (task.status === 'done' || task.status === 'failed' || task.status === 'cancelled') {
-      // Already terminal
-      return;
-    }
+    const allTasks = Array.from(this.tasks.values());
+    const targetTasks = [rootTask, ...descendantsOf(allTasks, id)];
 
-    // Auto-deny all pending approvals for this task
-    const pendingApprovals = Array.from(this.approvals.entries())
-      .filter(([_, approval]) => approval.taskId === id);
-
-    for (const [approvalId, approval] of pendingApprovals) {
-      approval.resolver(false);
-      this.approvals.delete(approvalId);
-      this.emit('approval:resolved', { approvalId, taskId: id, decision: 'deny' });
-    }
-
-    if (task.status === 'queued') {
-      // Remove from queue, never started
-      const queueIndex = this.queue.indexOf(id);
-      if (queueIndex !== -1) {
-        this.queue.splice(queueIndex, 1);
+    for (const task of targetTasks) {
+      if (task.status === 'done' || task.status === 'failed' || task.status === 'cancelled') {
+        continue;
       }
-      task.status = 'cancelled';
-      task.finishedAt = Date.now();
-    } else {
-      // Running or waiting approval - abort it
-      const abort = this.abortControllers.get(id);
-      if (abort) {
-        abort.abort(new Error('Task cancelled'));
+
+      // Auto-deny all pending approvals for this task
+      const pendingApprovals = Array.from(this.approvals.entries())
+        .filter(([_, approval]) => approval.taskId === task.id);
+
+      for (const [approvalId, approval] of pendingApprovals) {
+        approval.resolver(false);
+        this.approvals.delete(approvalId);
+        this.emit('approval:resolved', { approvalId, taskId: task.id, decision: 'deny' });
       }
-      task.status = 'cancelled';
-      task.finishedAt = Date.now();
+
+      // Release write lock if held
+      if (this.writeLocks.get(task.cwd) === task.id) {
+        this.writeLocks.delete(task.cwd);
+      }
+
+      // Remove from suspended
+      this.suspended.delete(task.id);
+
+      if (task.status === 'queued') {
+        const queueIndex = this.queue.indexOf(task.id);
+        if (queueIndex !== -1) {
+          this.queue.splice(queueIndex, 1);
+        }
+        task.status = 'cancelled';
+        task.finishedAt = Date.now();
+      } else {
+        const abort = this.abortControllers.get(task.id);
+        if (abort) {
+          abort.abort(new Error('Task cancelled'));
+        }
+        task.status = 'cancelled';
+        task.finishedAt = Date.now();
+      }
+
+      // If any parent was waiting on this task, wake up or update
+      for (const [parentId, waitingSet] of this.waitingOnChildren.entries()) {
+        if (waitingSet.has(task.id)) {
+          const resolver = this.waitingResolvers.get(parentId);
+          if (resolver) resolver();
+        }
+      }
+
+      this.scheduleSave();
+      this.emit('task:status', { taskId: task.id, newStatus: 'cancelled', task });
     }
 
-    this.scheduleSave();
-    this.emit('task:status', { taskId: id, newStatus: 'cancelled', task });
+    this.processQueue();
   }
 
   private processQueue(): void {
@@ -332,6 +545,14 @@ export class TaskManager extends EventEmitter {
       // Skip if already running or not queued
       if (task.status !== 'queued') continue;
 
+      // Check write lock availability
+      const isWriteCapable = task.policy !== 'read_only';
+      if (isWriteCapable && this.writeLocks.has(task.cwd)) {
+        // Re-queue at end (will be retried later)
+        this.queue.push(taskId);
+        continue;
+      }
+
       this.running.add(taskId);
       this.runTask(taskId).finally(() => {
         this.running.delete(taskId);
@@ -343,6 +564,12 @@ export class TaskManager extends EventEmitter {
   private async runTask(taskId: string): Promise<void> {
     const task = this.tasks.get(taskId);
     if (!task) return;
+
+    // Acquire write lock for write-capable tasks
+    const isWriteCapable = task.policy !== 'read_only';
+    if (isWriteCapable) {
+      this.writeLocks.set(task.cwd, taskId);
+    }
 
     // Create abort controller
     const abort = new AbortController();
@@ -378,16 +605,26 @@ export class TaskManager extends EventEmitter {
         }
       }
 
-      // Create budget (use provided or default)
-      const budget = createBudget({
+      // Get the shared tree budget
+      const budget = this.treeBudgets.get(task.treeId) ?? createBudget({
         maxRequests: 60,
         maxTokens: 1_000_000,
         maxCost: undefined,
       });
 
+      // Check budget before running
+      if (!budget.canSpend()) {
+        task.error = { code: 'budget_exceeded', message: 'Tree budget exhausted' };
+        this.updateStatus(taskId, 'failed');
+        return;
+      }
+
       // Create agent context
       const ctx: AgentContext = {
         taskId,
+        parentId: task.parentId,
+        depth: task.depth,
+        treeId: task.treeId,
         cwd: task.cwd,
         signal: abort.signal,
         state: createStateAccessor(task.sessionId, getTaskStateDir(taskId)),
@@ -396,6 +633,9 @@ export class TaskManager extends EventEmitter {
         log: (entry) => this.log(taskId, entry),
         requestApproval: (req) => this.requestApproval(taskId, req),
         callModel: this.customCallModel ?? getClient().callModel.bind(getClient()),
+        spawnChild: (goal: string, readOnly?: boolean) => this.spawnChild(taskId, goal, readOnly),
+        waitForChildren: (ids: string[], timeoutMs?: number) => this.waitForChildren(taskId, ids, timeoutMs),
+        getDescendant: (id: string) => this.getDescendant(taskId, id),
       };
 
       // Run the agent headlessly
@@ -447,6 +687,10 @@ export class TaskManager extends EventEmitter {
       this.log(taskId, { type: 'error', content: `Task execution error: ${errMsg}` });
     } finally {
       this.abortControllers.delete(taskId);
+      // Release write lock
+      if (isWriteCapable && this.writeLocks.get(task.cwd) === taskId) {
+        this.writeLocks.delete(task.cwd);
+      }
       this.scheduleSave();
     }
   }
@@ -521,7 +765,7 @@ export class TaskManager extends EventEmitter {
     this.logs.set(taskId, buffer);
 
     // Append to disk
-    appendTaskLog(taskId, fullEntry);
+    appendTaskLog(taskId, fullEntry, this.tasksDir);
 
     this.emit('task:log', { taskId, entry: fullEntry });
   }
@@ -540,7 +784,7 @@ export class TaskManager extends EventEmitter {
 
     // If buffer doesn't have enough history, load from disk
     if (opts?.fromSeq && buffer.length > 0 && buffer[0]!.seq > fromSeq) {
-      entries = loadTaskLog(taskId, opts);
+      entries = loadTaskLog(taskId, { ...opts, tasksDir: this.tasksDir });
     }
 
     if (opts?.limit && entries.length > opts.limit) {

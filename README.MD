@@ -115,6 +115,48 @@ Forge includes four git tools that let the agent manage version control directly
 - No destructive operations: no `push`, `reset`, `--force`, `--amend`, `--no-verify`, or `commit -a`.
 - Git hooks run normally; hook failures are returned as errors.
 
+## Dashboard
+
+When you run `forge` without arguments, it starts in **dashboard mode** — a task-oriented TUI where you type goals and watch tasks run in the background.
+
+### Launching the Dashboard
+
+```sh
+forge              # Dashboard mode (default)
+forge chat         # Legacy interactive session mode
+```
+
+### Dashboard Commands
+
+| Command | Action |
+| --- | --- |
+| `plain text` | Create a new task with that goal |
+| `/open <n>` | Select task and show its log |
+| `/cancel <n>` | Cancel a task and all descendants |
+| `/approve <n>` | Approve oldest pending approval for task `n` |
+| `/approve all` | Approve all pending approvals (requires confirmation) |
+| `/deny <n>` | Deny oldest pending approval for task `n` |
+| `/diff <n>` | Show the task's diff in the detail pane |
+| `/merge <n>` | Merge the task's branch into main (requires confirmation) |
+| `/discard <n>` | Discard the task's worktree and branch (requires confirmation) |
+| `/resume <n>` | Resume an interrupted task |
+| `/collapse <n>` | Collapse a task's children in the tree |
+| `/expand <n>` | Expand a task's children in the tree |
+| `/new [--read-only] [--shared] [--policy ask|auto_in_worktree|read_only] <goal>` | Create a task with explicit options |
+| `/help` | List commands |
+| `/quit` | Exit the dashboard |
+
+### Keyboard Navigation
+
+- **Tab**: Switch focus between task list and input
+- **Arrow keys / j-k**: Navigate task list
+- **PageUp/PageDown**: Scroll through task log
+- **a**: Toggle approvals inbox overlay
+
+### Child Tasks
+
+Tasks can spawn child tasks using the `spawn_task`, `wait_for_tasks`, and `get_task` tools. These appear nested under their parent with shared budgets and inherit strict policy limits.
+
 ## Local data
 
 Conversation state is stored in `.agent-sessions/` under the working directory. Session titles and metadata are stored in `.forge/meta/` under that directory. The API key saved by `forge config set-key` is saved in `~/.forge/config.json`.
@@ -124,10 +166,10 @@ Conversation state is stored in `.agent-sessions/` under the working directory. 
 ```sh
 pnpm install
 pnpm build
-pnpm eval
+pnpm test
 ```
 
-`pnpm build` compiles the TypeScript sources into `dist/`. `pnpm eval` runs the evaluation runner. The package does not currently define an automated test suite.
+`pnpm build` compiles the TypeScript sources into `dist/`. `pnpm test` runs the full test suite.
 
 ## License
 

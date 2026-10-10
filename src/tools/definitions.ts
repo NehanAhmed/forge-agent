@@ -6,6 +6,17 @@ import type { AgentContext } from '../core/context.js';
 import { executeWithPolicy } from '../core/approvals.js';
 
 export function createTools(ctx: AgentContext) {
+  const childTools = [];
+  if (ctx.spawnChild && (ctx.depth ?? 0) < 2) {
+    childTools.push(createSpawnTaskTool(ctx));
+  }
+  if (ctx.waitForChildren) {
+    childTools.push(createWaitForTasksTool(ctx));
+  }
+  if (ctx.getDescendant) {
+    childTools.push(createGetTaskTool(ctx));
+  }
+
   // For read_only policy, expose only safe read tools
   if (ctx.policy === 'read_only') {
     return [
@@ -13,6 +24,7 @@ export function createTools(ctx: AgentContext) {
       createSearchCodeTool(ctx),
       createGitStatusTool(ctx),
       createGitDiffTool(ctx),
+      ...childTools,
     ];
   }
 
@@ -27,6 +39,7 @@ export function createTools(ctx: AgentContext) {
     createGitDiffTool(ctx),
     createGitAddTool(ctx),
     createGitCommitTool(ctx),
+    ...childTools,
   ];
 }
 
@@ -172,6 +185,56 @@ function createGitCommitTool(ctx: AgentContext) {
       return executeWithPolicy(ctx, 'write', 'git_commit', { message }, () => ({
         output: gitCommit(ctx, message),
       }));
+    },
+  });
+}
+
+function createSpawnTaskTool(ctx: AgentContext) {
+  return tool({
+    name: 'spawn_task',
+    description:
+      'Spawn a child task that runs in parallel/background to accomplish a well-defined sub-goal. Child tasks share your budget and worktree. Write-capable children run one at a time to prevent file corruption. Returns immediately with the child task ID.',
+    inputSchema: z.object({
+      goal: z.string().describe('Clear, self-contained goal for the child task.'),
+      readOnly: z.boolean().optional().describe('Set to true if the child task should be restricted to read-only tools.'),
+    }),
+    execute: async ({ goal, readOnly }) => {
+      if (!ctx.spawnChild) throw new Error('spawn_task unavailable in this context');
+      return ctx.spawnChild(goal, readOnly);
+    },
+  });
+}
+
+function createWaitForTasksTool(ctx: AgentContext) {
+  return tool({
+    name: 'wait_for_tasks',
+    description:
+      'Block until specified child tasks have completed (or until timeout). Releases concurrency slots while waiting so children can execute.',
+    inputSchema: z.object({
+      ids: z.array(z.string()).describe('List of child task IDs to wait for.'),
+      timeoutMs: z.number().optional().describe('Optional timeout in milliseconds.'),
+    }),
+    execute: async ({ ids, timeoutMs }) => {
+      if (!ctx.waitForChildren) throw new Error('wait_for_tasks unavailable in this context');
+      const results = await ctx.waitForChildren(ids, timeoutMs);
+      return { tasks: results };
+    },
+  });
+}
+
+function createGetTaskTool(ctx: AgentContext) {
+  return tool({
+    name: 'get_task',
+    description:
+      'Check the status, usage, and summary of one of your child tasks without blocking.',
+    inputSchema: z.object({
+      id: z.string().describe('Child task ID to query.'),
+    }),
+    execute: async ({ id }) => {
+      if (!ctx.getDescendant) throw new Error('get_task unavailable in this context');
+      const info = await ctx.getDescendant(id);
+      if (!info) return { error: `Child task ${id} not found` };
+      return { task: info };
     },
   });
 }
