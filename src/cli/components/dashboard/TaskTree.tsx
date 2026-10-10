@@ -26,7 +26,7 @@ export function TaskTree({ tasks, selectedId, collapsed, width, onSelect, onTogg
     );
   }
 
-  const maxGoalLen = Math.max(20, width - 40);
+  const maxGoalLen = Math.max(20, width - 20);
 
   return (
     <Box flexDirection="column">
@@ -40,8 +40,10 @@ export function TaskTree({ tasks, selectedId, collapsed, width, onSelect, onTogg
             ? Math.floor((row.task.finishedAt - row.task.startedAt) / 1000)
             : null;
 
-        const cost = row.totalCost > 0 ? `$${row.totalCost.toFixed(2)}` : '';
-        const desc = row.task.statusDetail ? ` ${row.task.statusDetail}` : '';
+        // Only show cost when non-zero
+        const hasCost = row.totalCost > 0;
+        const cost = hasCost ? `$${row.totalCost.toFixed(2)}` : '';
+
         const goal = row.task.goal.length > maxGoalLen
           ? row.task.goal.slice(0, maxGoalLen - 1) + '…'
           : row.task.goal;
@@ -53,7 +55,7 @@ export function TaskTree({ tasks, selectedId, collapsed, width, onSelect, onTogg
             : `  ${row.task.displayId} `;
 
         return (
-          <Box key={row.task.id} paddingX={0}>
+          <Box key={row.task.id}>
             <Text
               color={selected ? 'cyanBright' : undefined}
               bold={selected}
@@ -64,10 +66,8 @@ export function TaskTree({ tasks, selectedId, collapsed, width, onSelect, onTogg
               {glyph}
               {' '}
               {goal}
-              {' '.repeat(Math.max(1, maxGoalLen - goal.length))}
-              {elapsed !== null && <Text dimColor>{elapsed}s</Text>}
-              {cost && <Text dimColor> {cost}</Text>}
-              {desc && <Text dimColor>{desc}</Text>}
+              {elapsed !== null && elapsed > 0 && <Text dimColor> {elapsed}s</Text>}
+              {hasCost && <Text dimColor> {cost}</Text>}
             </Text>
           </Box>
         );
