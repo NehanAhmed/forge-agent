@@ -151,7 +151,7 @@ forge chat         # Legacy interactive session mode
 | `/resume <n>` | Resume an interrupted task |
 | `/collapse <n>` | Collapse a task's children in the tree |
 | `/expand <n>` | Expand a task's children in the tree |
-| `/new [--read-only] [--shared] [--policy ask|auto_in_worktree|read_only] <goal>` | Create a task with explicit options |
+| `/new [--read-only] [--shared] [--policy ask\|auto_in_worktree\|read_only] <goal>` | Create a task with explicit options |
 | `/help` | List commands |
 | `/quit` | Exit the dashboard |
 

@@ -363,6 +363,83 @@ describe('Phase 4: TaskManager Queue, Concurrency & Lifecycle', () => {
       await second.shutdown({ graceMs: 0 });
     }
   });
+
+  it('lets a write-capable child run while its parent waits at concurrency 1', async () => {
+    const dir = createTempDir('forge-wait-');
+    const tasksDir = path.join(dir, 'tasks');
+    const parentGoal = 'parent waits for child';
+    const childGoal = 'child shares the working tree';
+
+    let manager: TaskManager | undefined;
+    let parentCwd = '';
+    let childCwd = '';
+
+    const callModel = (request: { input?: string }) => ({
+      async *getTextStream() {
+        if (request.input === parentGoal) {
+          // Let create() return before the parent schedules any work.
+          await new Promise(resolve => setTimeout(resolve, 0));
+          const current = manager!;
+          const parent = current.list().find(task => task.goal === parentGoal)!;
+          const child = await current.spawnChild(parent.id, childGoal, false);
+          const results = await current.waitForChildren(parent.id, [child.id]);
+          assert.equal(results[0]?.status, 'done');
+          parentCwd = current.get(parent.id)!.cwd;
+          childCwd = current.get(child.id)!.cwd;
+        }
+        yield 'done';
+      },
+      async getText() {
+        return 'done';
+      },
+      async getUsage() {
+        return { inputTokens: 1, outputTokens: 1, cost: 0 };
+      },
+      async *getReasoningStream() {},
+      async *getToolCallsStream() {},
+    });
+
+    manager = new TaskManager({ concurrency: 1, repoCwd: dir, tasksDir, callModel });
+
+    try {
+      const parent = manager.create(parentGoal, { cwd: dir, isolation: 'shared' });
+      await waitFor(
+        () => manager!.get(parent.id)?.status === 'done',
+        5000,
+        'parent and child to finish',
+      );
+
+      const child = manager.list().find(task => task.goal === childGoal)!;
+      assert.equal(child.status, 'done');
+      assert.equal(child.parentId, parent.id);
+      assert.equal(child.isolation, 'shared');
+      assert.equal(parentCwd, dir);
+      assert.equal(childCwd, dir);
+    } finally {
+      await manager.shutdown({ graceMs: 500 });
+    }
+  });
+
+  it('gives write-capable children the parent cwd and shared isolation', async () => {
+    const dir = createTempDir('forge-child-shared-');
+    const manager = new TaskManager({ concurrency: 0, callModel: createFakeModelCall() });
+
+    try {
+      const parent = manager.create('Write-capable parent', {
+        cwd: dir,
+        isolation: 'worktree',
+        policy: 'ask',
+      });
+      const child = await manager.spawnChild(parent.id, 'Write-capable child', false);
+      const childTask = manager.get(child.id)!;
+
+      assert.equal(childTask.cwd, parent.cwd);
+      assert.equal(childTask.isolation, 'shared');
+      assert.notEqual(childTask.policy, 'read_only');
+    } finally {
+      await manager.shutdown({ graceMs: 0 });
+    }
+  });
 });
 
 describe('Phase 5: Approvals Inbox & Policies', () => {

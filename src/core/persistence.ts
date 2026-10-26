@@ -45,6 +45,17 @@ function atomicWrite(filePath: string, content: string): void {
   }
 }
 
+function backupTaskIndex(indexPath: string, reason: string): void {
+  const backupPath = `${indexPath}.bak.${Date.now()}`;
+  try {
+    fs.copyFileSync(indexPath, backupPath);
+    console.warn(`[persistence] Backed up task index to ${backupPath}: ${reason}`);
+  } catch (err: any) {
+    const detail = err?.message ?? String(err);
+    console.warn(`[persistence] Could not back up task index (${reason}): ${detail}`);
+  }
+}
+
 export function loadTaskIndex(tasksDir?: string): TaskIndex | null {
   const dir = tasksDir ?? DEFAULT_TASKS_DIR;
   ensureTasksDir(dir);
@@ -82,10 +93,12 @@ export function loadTaskIndex(tasksDir?: string): TaskIndex | null {
         parsed.version = 2;
         return parsed;
       }
+      backupTaskIndex(indexPath, `unsupported task index version ${String(parsed.version)}`);
       return null;
     }
     return parsed;
   } catch (err: any) {
+    backupTaskIndex(indexPath, err?.message ?? String(err));
     return null;
   }
 }

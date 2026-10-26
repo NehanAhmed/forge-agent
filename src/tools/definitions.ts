@@ -7,7 +7,7 @@ import { executeWithPolicy } from '../core/approvals.js';
 
 export function createTools(ctx: AgentContext) {
   const childTools = [];
-  if (ctx.spawnChild && (ctx.depth ?? 0) < 2) {
+  if (ctx.spawnChild && (ctx.depth ?? 0) < (ctx.maxDepth ?? 2)) {
     childTools.push(createSpawnTaskTool(ctx));
   }
   if (ctx.waitForChildren) {

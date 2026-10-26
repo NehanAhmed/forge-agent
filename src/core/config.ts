@@ -46,6 +46,27 @@ function getConfigPath(): string {
   return path.join(os.homedir(), '.forge', 'config.json');
 }
 
+function atomicWrite(filePath: string, content: string): void {
+  const tempPath = `${filePath}.tmp.${Date.now()}`;
+  let mode = 0o600;
+  try {
+    mode = fs.statSync(filePath).mode & 0o777;
+  } catch {
+    // New file: keep the existing restrictive default.
+  }
+  try {
+    fs.writeFileSync(tempPath, content, { encoding: 'utf-8', mode });
+    fs.renameSync(tempPath, filePath);
+  } catch (err) {
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    } catch {
+      // Best-effort cleanup; surface the original write error.
+    }
+    throw err;
+  }
+}
+
 export function getConfig(): ForgeConfig {
   const configPath = getConfigPath();
   if (!fs.existsSync(configPath)) {
@@ -100,10 +121,6 @@ export function updateConfig(patch: Partial<ForgeConfig>): ForgeConfig {
   } catch {
     // Keep writing defaults when the file is missing or malformed.
   }
-  fs.writeFileSync(
-    getConfigPath(),
-    JSON.stringify({ ...existing, ...updated }, null, 2),
-    { encoding: 'utf-8', mode: 0o600 },
-  );
+  atomicWrite(getConfigPath(), JSON.stringify({ ...existing, ...updated }, null, 2));
   return updated;
 }

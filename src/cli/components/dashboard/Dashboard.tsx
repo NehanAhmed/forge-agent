@@ -87,7 +87,7 @@ export function Dashboard({ client }: DashboardProps) {
   const screenReader = process.env.INK_SCREEN_READER === 'true';
   const ascii = config.ui.ascii || screenReader;
   const dot = ascii ? ' | ' : ' · ';
-  const theme = useMemo(() => createTheme({ noColor: screenReader }), [screenReader]);
+  const theme = useMemo(() => createTheme({ noColor: screenReader || undefined }), [screenReader]);
   const glyphs = useMemo(() => createGlyphs(ascii), [ascii]);
   const layout = useMemo(() => {
     const base = computeLayout(columns, rows);
@@ -811,7 +811,7 @@ export function Dashboard({ client }: DashboardProps) {
   usePaste(text => {
     if (overlay || layout.mode === 'tiny') return;
     const cleaned = sanitizeText(text)
-      .replace(/\r?\n/g, ' ')
+      .replace(/\r\n|\r|\n/g, ' ')
       .replace(/\t/g, '  ')
       .slice(0, 4000);
     setFocus('input');

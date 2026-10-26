@@ -287,6 +287,7 @@ function App() {
       signal: abortController.signal,
       state: createStateAccessor(sessionId),
       policy: 'ask',
+      maxDepth: getConfig().children.maxDepth,
       budget: createBudget({ maxRequests: 1000, maxTokens: 10_000_000 }), // Generous limits for interactive
       log: (entry) => {
         // Map log entries to LogEvent format
@@ -379,11 +380,18 @@ async function main() {
 
   // Construct the manager before rendering so events are never missed and the
   // dashboard can shut it down cleanly after Ink unmounts.
-  const manager = new TaskManager();
+  const config = getConfig();
+  const manager = new TaskManager({
+    treeLimits: {
+      maxDepth: config.children.maxDepth,
+      maxChildrenPerTask: config.children.maxPerTask,
+      maxTasksPerTree: config.children.maxPerTree,
+    },
+  });
   const client = new InProcessTaskClient(manager);
 
   const instance = render(<Dashboard client={client} />, {
-    alternateScreen: getConfig().ui.alternateScreen,
+    alternateScreen: config.ui.alternateScreen,
     exitOnCtrlC: false,
     maxFps: 30,
   });

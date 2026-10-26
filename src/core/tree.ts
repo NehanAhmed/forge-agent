@@ -71,7 +71,15 @@ export function parseTaskRef(input: string): string | null {
 
 export function resolveTaskByIdOrDisplay(tasks: Task[], ref: string): Task | undefined {
   const clean = ref.replace(/^#/, '');
-  return tasks.find(t => t.displayId === clean || t.id === clean || t.id.includes(clean));
+  const byDisplayId = tasks.find(t => t.displayId === clean);
+  if (byDisplayId) return byDisplayId;
+
+  const byId = tasks.find(t => t.id === clean);
+  if (byId) return byId;
+
+  if (!clean) return undefined;
+  const prefixMatches = tasks.filter(t => t.id.startsWith(clean));
+  return prefixMatches.length === 1 ? prefixMatches[0] : undefined;
 }
 
 

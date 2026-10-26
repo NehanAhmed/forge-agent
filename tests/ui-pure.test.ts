@@ -58,6 +58,11 @@ describe('UI Pure Modules', () => {
       });
     });
 
+    it('rejects unknown /new flags and unsupported policies', () => {
+      assert.equal(parseCommand('/new --unknown Run tests').kind, 'unknown');
+      assert.equal(parseCommand('/new --policy unsafe Run tests').kind, 'unknown');
+    });
+
     it('returns error on unknown command or missing args', () => {
       const res1 = parseCommand('/foo bar');
       assert.equal(res1.kind, 'unknown');

@@ -34,6 +34,7 @@ export interface AgentContext {
   taskId?: string;           // undefined for legacy interactive session
   parentId?: string;
   depth?: number;
+  maxDepth?: number;
   treeId?: string;
   cwd: string;               // absolute, already resolved
   signal: AbortSignal;

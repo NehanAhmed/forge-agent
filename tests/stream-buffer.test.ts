@@ -41,4 +41,19 @@ describe('StreamCoalescer', () => {
     coalescer.flush();
     assert.deepEqual(flushed, ['tail']);
   });
+
+  it('flushes trailing text after maxDelayMs without another push', async () => {
+    const flushed: string[] = [];
+    const coalescer = new StreamCoalescer({
+      maxChars: 100,
+      maxDelayMs: 20,
+      onFlush: text => flushed.push(text),
+    });
+
+    coalescer.push('tail');
+    assert.deepEqual(flushed, []);
+    await new Promise(resolve => setTimeout(resolve, 60));
+    assert.deepEqual(flushed, ['tail']);
+    assert.equal(coalescer.pending(), '');
+  });
 });

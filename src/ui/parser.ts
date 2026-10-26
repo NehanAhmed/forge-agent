@@ -104,6 +104,7 @@ export function parseCommand(input: string): ParsedCommand {
   }
 
   if (cmd === 'new') {
+    const usage = 'Usage: /new [--read-only] [--shared] [--policy ask|auto_in_worktree|read_only] <goal>';
     const options: CommandOptions = {};
     let idx = 1;
     while (idx < parts.length && parts[idx]?.startsWith('--')) {
@@ -114,15 +115,18 @@ export function parseCommand(input: string): ParsedCommand {
         options.shared = true;
       } else if (flag === '--policy') {
         const val = parts[idx + 1];
-        if (val === 'ask' || val === 'auto_in_worktree' || val === 'read_only') {
-          options.policy = val;
-          idx++;
+        if (val !== 'ask' && val !== 'auto_in_worktree' && val !== 'read_only') {
+          return { kind: 'unknown', error: usage };
         }
+        options.policy = val;
+        idx++;
+      } else {
+        return { kind: 'unknown', error: usage };
       }
       idx++;
     }
     const goal = parts.slice(idx).join(' ');
-    if (!goal) return { kind: 'unknown', error: 'Usage: /new [--read-only] [--shared] [--policy ask|auto_in_worktree|read_only] <goal>' };
+    if (!goal) return { kind: 'unknown', error: usage };
     return { kind: 'new', options, goal };
   }
 

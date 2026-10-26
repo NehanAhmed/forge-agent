@@ -16,6 +16,7 @@ export class StreamCoalescer {
   private readonly onFlush: (text: string) => void;
   private buffer = '';
   private lastFlushAt: number;
+  private flushTimer: NodeJS.Timeout | null = null;
 
   constructor(options: StreamCoalescerOptions) {
     this.maxChars = Math.max(1, options.maxChars ?? 512);
@@ -32,10 +33,26 @@ export class StreamCoalescer {
     const elapsed = this.now() - this.lastFlushAt;
     if (this.buffer.length >= this.maxChars || elapsed >= this.maxDelayMs) {
       this.flush();
+      return;
+    }
+
+    // Trailing flush: without another push, buffered text would otherwise sit
+    // in memory until the stream ends.
+    if (!this.flushTimer) {
+      const timer = setTimeout(() => {
+        this.flushTimer = null;
+        this.flush();
+      }, this.maxDelayMs);
+      timer.unref?.();
+      this.flushTimer = timer;
     }
   }
 
   flush(): void {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
     if (this.buffer.length === 0) return;
     const text = this.buffer;
     this.buffer = '';

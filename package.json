@@ -5,7 +5,7 @@
   "license": "MIT",
   "main": "dist/index.js",
   "scripts": {
-    "test": "tsx --test tests/**/*.test.ts",
+    "test": "tsx --test tests/*.test.ts",
     "build": "tsc && npm run postbuild",
     "postbuild": "node ./scripts/add-shebang.js",
     "prepare": "npm run build",

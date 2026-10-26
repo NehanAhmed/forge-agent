@@ -22,8 +22,8 @@ export const CODING_MODELS: ModelInfo[] = [
   },
   {
     id: 'nvidia/nemotron-3.5-super-vl:free',
-    name: 'Qwen 3.8 27B',
-    description: 'Balanced coding and general reasoning (current default)',
+    name: 'Nemotron 3.5 Super VL',
+    description: 'Balanced coding and general reasoning',
   },
 ];
 

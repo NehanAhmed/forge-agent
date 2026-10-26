@@ -30,6 +30,7 @@ export function buildTree(tasks: Task[]): TreeNode[] {
   }
 
   function computeAggregates(node: TreeNode): void {
+    node.children.sort((a, b) => a.task.createdAt - b.task.createdAt);
     for (const child of node.children) {
       computeAggregates(child);
       node.descendantCount += 1 + child.descendantCount;

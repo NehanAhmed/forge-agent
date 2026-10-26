@@ -59,6 +59,12 @@ export type TaskEvent =
   | 'approval:resolved'
   | 'task:review';
 
+const TREE_BUDGET_LIMITS = {
+  maxRequests: 60,
+  maxTokens: 1_000_000,
+  maxCost: undefined,
+};
+
 export class TaskManager extends EventEmitter {
   private tasks = new Map<string, Task>();
   private logs = new Map<string, LogEntry[]>(); // In-memory ring buffer
@@ -87,6 +93,7 @@ export class TaskManager extends EventEmitter {
   private waitingOnChildren = new Map<string, Set<string>>(); // parent -> child ids
   private waitingResolvers = new Map<string, () => void>(); // parent -> resume resolver
   private writeLocks = new Map<string, string>(); // cwd -> taskId
+  private lockCwds = new Map<string, string>(); // taskId -> cwd used for its write lock
   private suspended = new Set<string>(); // parents waiting on children (subset of running)
 
   private tasksDir?: string;
@@ -164,17 +171,18 @@ export class TaskManager extends EventEmitter {
     // Restore tree budgets from persisted usage
     for (const task of this.tasks.values()) {
       if (!task.parentId) {
-        this.treeBudgets.set(task.treeId, createBudget({
-          maxRequests: 60,
-          maxTokens: 1_000_000,
-          maxCost: undefined,
-        }));
-        const budget = this.treeBudgets.get(task.treeId)!;
-        budget.record({
-          tokens: (task.usage?.inputTokens ?? 0) + (task.usage?.outputTokens ?? 0),
-          cost: task.usage?.cost ?? 0,
-          requests: task.usage?.requests ?? 0,
-        });
+        const budget = createBudget(TREE_BUDGET_LIMITS);
+        const treeTasks = Array.from(this.tasks.values()).filter(t => t.treeId === task.treeId);
+        const usage = treeTasks.reduce(
+          (total, member) => ({
+            tokens: total.tokens + (member.usage?.inputTokens ?? 0) + (member.usage?.outputTokens ?? 0),
+            cost: total.cost + (member.usage?.cost ?? 0),
+            requests: total.requests + (member.usage?.requests ?? 0),
+          }),
+          { tokens: 0, cost: 0, requests: 0 },
+        );
+        budget.record(usage);
+        this.treeBudgets.set(task.treeId, budget);
       }
     }
   }
@@ -245,11 +253,7 @@ export class TaskManager extends EventEmitter {
       displayId,
     });
 
-    const budget = opts.budget ?? createBudget({
-      maxRequests: 60,
-      maxTokens: 1_000_000,
-      maxCost: undefined,
-    });
+    const budget = opts.budget ?? createBudget(TREE_BUDGET_LIMITS);
     this.treeBudgets.set(id, budget);
 
     // Downgrade auto_in_worktree to ask if isolation is shared
@@ -306,17 +310,13 @@ export class TaskManager extends EventEmitter {
     const task = createTask(id, goal, {
       sessionId: id,
       cwd: parent.cwd,
-      isolation: parent.isolation,
+      isolation: 'shared',
       policy,
       parentId,
       depth: parent.depth + 1,
       treeId,
       displayId,
     });
-
-    if (readOnly) {
-      task.isolation = 'shared';
-    }
 
     this.tasks.set(id, task);
     this.logs.set(id, []);
@@ -360,45 +360,77 @@ export class TaskManager extends EventEmitter {
       });
     }
 
-    // Register parent as waiting
+    // Register parent as waiting and release its slot/working-tree lock so the
+    // children it spawned can actually be scheduled.
     this.waitingOnChildren.set(parentId, new Set(childIds));
+    this.suspendParent(parentId);
 
     return new Promise((resolve) => {
-      const check = () => {
-        if (allDone()) {
-          resolve(childIds.map(cid => {
-            const t = this.tasks.get(cid)!;
-            return { id: cid, status: t.status, summary: t.summary, error: t.error };
-          }));
-        } else if (timeoutMs) {
-          resolve(childIds.map(cid => {
-            const t = this.tasks.get(cid)!;
-            return { id: cid, status: t.status, summary: t.summary, error: t.error };
-          }));
-        }
+      let settled = false;
+      let interval: NodeJS.Timeout | undefined;
+      let timeoutTimer: NodeJS.Timeout | undefined;
+
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (interval) clearInterval(interval);
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        this.waitingOnChildren.delete(parentId);
+
+        const results = childIds.map(cid => {
+          const t = this.tasks.get(cid)!;
+          return { id: cid, status: t.status, summary: t.summary, error: t.error };
+        });
+
+        // Requeue the parent ahead of other roots so it takes the next slot and
+        // reacquires its lock before the agent continues after this tool call.
+        void this.resumeParent(parentId).then(
+          () => resolve(results),
+          () => resolve(results),
+        );
       };
 
-      // Polling fallback with a small interval
-      const interval = setInterval(() => {
-        if (allDone()) {
-          clearInterval(interval);
-          this.waitingOnChildren.delete(parentId);
-          check();
+      // Polling fallback with a small interval.
+      interval = setInterval(() => {
+        const abort = this.abortControllers.get(parentId);
+        if (allDone() || this.shuttingDown || abort?.signal.aborted) {
+          finish();
         }
       }, 100);
       interval.unref();
 
-
-      // Timeout handler
+      // Timeout handler.
       if (timeoutMs) {
-        setTimeout(() => {
-          if (this.waitingOnChildren.has(parentId)) {
-            clearInterval(interval);
-            this.waitingOnChildren.delete(parentId);
-            check();
-          }
-        }, timeoutMs);
+        timeoutTimer = setTimeout(finish, timeoutMs);
+        timeoutTimer.unref?.();
       }
+    });
+  }
+
+  private suspendParent(parentId: string): void {
+    this.suspended.add(parentId);
+    this.running.delete(parentId);
+
+    const lockCwd = this.lockCwds.get(parentId);
+    if (lockCwd !== undefined && this.writeLocks.get(lockCwd) === parentId) {
+      this.writeLocks.delete(lockCwd);
+    }
+
+    this.processQueue();
+  }
+
+  private resumeParent(parentId: string): Promise<void> {
+    const task = this.tasks.get(parentId);
+    if (!task || this.shuttingDown || task.status !== 'running') {
+      this.suspended.delete(parentId);
+      return Promise.resolve();
+    }
+
+    return new Promise<void>((resolve) => {
+      this.waitingResolvers.set(parentId, resolve);
+      this.queue = this.queue.filter(id => id !== parentId);
+      this.queue.unshift(parentId);
+      this.processQueue();
     });
   }
 
@@ -515,9 +547,7 @@ export class TaskManager extends EventEmitter {
       }
 
       // Release write lock if held
-      if (this.writeLocks.get(task.cwd) === task.id) {
-        this.writeLocks.delete(task.cwd);
-      }
+      this.releaseWriteLock(task.id);
 
       // Remove from suspended
       this.suspended.delete(task.id);
@@ -538,14 +568,16 @@ export class TaskManager extends EventEmitter {
         task.finishedAt = Date.now();
       }
 
-      // If any parent was waiting on this task, wake up or update
-      for (const [parentId, waitingSet] of this.waitingOnChildren.entries()) {
-        if (waitingSet.has(task.id)) {
-          const resolver = this.waitingResolvers.get(parentId);
-          if (resolver) resolver();
-        }
+      // A parent queued to resume from waitForChildren must be released even
+      // though cancellation removed it from the suspended set.
+      const resumeResolver = this.waitingResolvers.get(task.id);
+      if (resumeResolver) {
+        this.waitingResolvers.delete(task.id);
+        resumeResolver();
       }
 
+      // If any parent was waiting on this task, its 100ms poll will observe the
+      // terminal status and resume the parent.
       this.scheduleSave();
       this.emit('task:status', { taskId: task.id, newStatus: 'cancelled', task });
     }
@@ -574,14 +606,39 @@ export class TaskManager extends EventEmitter {
       const task = this.tasks.get(taskId);
       if (!task) continue;
 
-      // Skip if already running or not queued
-      if (task.status !== 'queued') continue;
+      const isResume = this.suspended.has(taskId);
 
-      // Check write lock availability
+      // Skip if already running or not queued (suspended parents stay
+      // `running`, but are being requeued to reclaim their slot).
+      if (!isResume && task.status !== 'queued') continue;
+
+      if (isResume && task.status === 'cancelled') {
+        const resolver = this.waitingResolvers.get(taskId);
+        this.waitingResolvers.delete(taskId);
+        this.suspended.delete(taskId);
+        resolver?.();
+        continue;
+      }
+
+      // Check write lock availability. A resumed parent may have moved into a
+      // worktree, but its lock was taken against the pre-worktree cwd.
       const isWriteCapable = task.policy !== 'read_only';
-      if (isWriteCapable && this.writeLocks.has(task.cwd)) {
+      const lockCwd = this.lockCwds.get(taskId) ?? task.cwd;
+      if (isWriteCapable && this.writeLocks.has(lockCwd)) {
         // Defer, but do not block unrelated tasks later in the queue.
         deferred.push(taskId);
+        continue;
+      }
+
+      if (isResume) {
+        this.running.add(taskId);
+        if (isWriteCapable) {
+          this.writeLocks.set(lockCwd, taskId);
+        }
+        this.suspended.delete(taskId);
+        const resolver = this.waitingResolvers.get(taskId);
+        this.waitingResolvers.delete(taskId);
+        resolver?.();
         continue;
       }
 
@@ -601,7 +658,7 @@ export class TaskManager extends EventEmitter {
         })
         .finally(() => {
           this.activeRuns.delete(taskId);
-          this.running.delete(taskId);
+          this.releaseResources(taskId);
           this.processQueue(); // Process next in queue
         });
     }
@@ -617,7 +674,7 @@ export class TaskManager extends EventEmitter {
     const isWriteCapable = task.policy !== 'read_only';
     const lockCwd = task.cwd;
     if (isWriteCapable) {
-      this.writeLocks.set(lockCwd, taskId);
+      this.acquireWriteLock(taskId, lockCwd);
     }
 
     // Create abort controller
@@ -655,11 +712,7 @@ export class TaskManager extends EventEmitter {
       }
 
       // Get the shared tree budget
-      const budget = this.treeBudgets.get(task.treeId) ?? createBudget({
-        maxRequests: 60,
-        maxTokens: 1_000_000,
-        maxCost: undefined,
-      });
+      const budget = this.treeBudgets.get(task.treeId) ?? createBudget(TREE_BUDGET_LIMITS);
 
       // Check budget before running
       if (!budget.canSpend()) {
@@ -673,6 +726,7 @@ export class TaskManager extends EventEmitter {
         taskId,
         parentId: task.parentId,
         depth: task.depth,
+        maxDepth: this.treeLimits.maxDepth,
         treeId: task.treeId,
         cwd: task.cwd,
         signal: abort.signal,
@@ -707,7 +761,7 @@ export class TaskManager extends EventEmitter {
           task.error = { code: 'interrupted', message: 'Process shutting down' };
           task.resumable = true;
           this.updateStatus(taskId, 'failed');
-        } else {
+        } else if (task.status !== 'cancelled') {
           this.updateStatus(taskId, 'cancelled');
         }
       } else {
@@ -749,12 +803,27 @@ export class TaskManager extends EventEmitter {
       this.log(taskId, { type: 'error', content: `Task execution error: ${errMsg}` });
     } finally {
       this.abortControllers.delete(taskId);
-      // Release write lock
-      if (isWriteCapable && this.writeLocks.get(lockCwd) === taskId) {
-        this.writeLocks.delete(lockCwd);
-      }
       this.scheduleSave();
     }
+  }
+
+  private acquireWriteLock(taskId: string, lockCwd: string): void {
+    this.lockCwds.set(taskId, lockCwd);
+    this.writeLocks.set(lockCwd, taskId);
+  }
+
+  private releaseWriteLock(taskId: string): void {
+    const lockCwd = this.lockCwds.get(taskId);
+    if (lockCwd !== undefined && this.writeLocks.get(lockCwd) === taskId) {
+      this.writeLocks.delete(lockCwd);
+    }
+    this.lockCwds.delete(taskId);
+  }
+
+  private releaseResources(taskId: string): void {
+    this.releaseWriteLock(taskId);
+    this.running.delete(taskId);
+    this.suspended.delete(taskId);
   }
 
   private async finalizeWorktree(task: Task): Promise<void> {
@@ -1010,6 +1079,13 @@ export class TaskManager extends EventEmitter {
     for (const controller of this.abortControllers.values()) {
       controller.abort(new Error('Process shutting down'));
     }
+
+    // Release parents queued to resume from a wait; they will observe the
+    // aborted signal and unwind instead of waiting for a slot that never comes.
+    for (const resolver of this.waitingResolvers.values()) {
+      resolver();
+    }
+    this.waitingResolvers.clear();
 
     const runs = [...this.activeRuns.values()];
     if (runs.length > 0) {
