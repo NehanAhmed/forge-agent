@@ -75,6 +75,14 @@ function createFakeModelCall(cannedText = 'Task completed successfully', cannedU
   });
 }
 
+async function waitFor(predicate: () => boolean, timeoutMs = 5000, label = 'condition'): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) throw new Error(`Timed out waiting for ${label}`);
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+}
+
 function createMockContext(overrides: Partial<AgentContext> = {}): AgentContext {
   const tmpDir = overrides.cwd ?? createTempDir();
   return {
@@ -263,6 +271,97 @@ describe('Phase 4: TaskManager Queue, Concurrency & Lifecycle', () => {
 
     const task = manager.create('Event test');
     assert.ok(events.includes('created'));
+  });
+
+  it('defers a write-locked task without spinning or stalling the queue', async () => {
+    const dir = createTempDir('forge-lock-');
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const callModel = () => ({
+      async *getTextStream() {
+        await gate;
+        yield 'done';
+      },
+      async getText() {
+        await gate;
+        return 'done';
+      },
+      async getUsage() {
+        return { inputTokens: 1, outputTokens: 1, cost: 0 };
+      },
+      async *getReasoningStream() {},
+      async *getToolCallsStream() {},
+    });
+
+    const manager = new TaskManager({
+      concurrency: 2,
+      repoCwd: dir,
+      tasksDir: path.join(dir, 'tasks'),
+      callModel,
+    });
+
+    try {
+      const first = manager.create('Hold the write lock', { cwd: dir, isolation: 'shared' });
+      await waitFor(() => manager.get(first.id)?.status === 'running', 3000, 'first task to start');
+
+      // Creating a second write-capable task must return immediately even though
+      // the first one owns the repository write lock.
+      const second = manager.create('Wait behind the lock', { cwd: dir, isolation: 'shared' });
+      assert.equal(manager.get(second.id)?.status, 'queued');
+
+      release();
+      await waitFor(() => manager.get(second.id)?.status === 'done', 5000, 'second task to finish');
+    } finally {
+      release();
+      await manager.shutdown({ graceMs: 500 });
+    }
+  });
+
+  it('starts tasks that were queued by a previous process', async () => {
+    const dir = createTempDir('forge-resume-queue-');
+    const tasksDir = path.join(dir, 'tasks');
+    const first = new TaskManager({ concurrency: 0, repoCwd: dir, tasksDir });
+    const queued = first.create('Survive a restart', { cwd: dir, isolation: 'shared' });
+    assert.equal(queued.status, 'queued');
+    await first.shutdown({ graceMs: 0 });
+
+    const second = new TaskManager({
+      concurrency: 1,
+      repoCwd: dir,
+      tasksDir,
+      callModel: createFakeModelCall(),
+    });
+    try {
+      assert.equal(second.get(queued.id)?.status, 'queued');
+      second.start();
+      await waitFor(() => second.get(queued.id)?.status === 'done', 5000, 'restored task to finish');
+    } finally {
+      await second.shutdown({ graceMs: 500 });
+    }
+  });
+
+  it('reloads persisted task logs without reusing sequence numbers', async () => {
+    const dir = createTempDir('forge-log-history-');
+    const tasksDir = path.join(dir, 'tasks');
+    const first = new TaskManager({ concurrency: 0, repoCwd: dir, tasksDir });
+    const task = first.create('Keep my log', { cwd: dir, isolation: 'shared' });
+    first.log(task.id, { type: 'info', content: 'before restart' });
+    await first.shutdown({ graceMs: 0 });
+
+    const second = new TaskManager({ concurrency: 0, repoCwd: dir, tasksDir });
+    try {
+      const restored = second.getLog(task.id);
+      assert.equal(restored.length, 1);
+      assert.equal(restored[0]?.content, 'before restart');
+      assert.equal(restored[0]?.seq, 1);
+
+      second.log(task.id, { type: 'info', content: 'after restart' });
+      const merged = second.getLog(task.id);
+      assert.deepEqual(merged.map(entry => entry.content), ['before restart', 'after restart']);
+      assert.deepEqual(merged.map(entry => entry.seq), [1, 2]);
+    } finally {
+      await second.shutdown({ graceMs: 0 });
+    }
   });
 });
 

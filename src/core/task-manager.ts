@@ -63,6 +63,8 @@ export class TaskManager extends EventEmitter {
   private tasks = new Map<string, Task>();
   private logs = new Map<string, LogEntry[]>(); // In-memory ring buffer
   private logSeq = new Map<string, number>(); // Per-task sequence counter
+  private logSeqReady = new Set<string>();
+  private logHistoryLoaded = new Set<string>();
   private approvals = new Map<string, Approval>();
   private saveDebounceTimer: NodeJS.Timeout | null = null;
   private readonly LOG_BUFFER_SIZE = 2000;
@@ -71,9 +73,13 @@ export class TaskManager extends EventEmitter {
   // Queue management
   private queue: string[] = []; // Task IDs waiting to run
   private running = new Set<string>(); // Task IDs currently running
+  private activeRuns = new Map<string, Promise<void>>();
   private abortControllers = new Map<string, AbortController>();
+  private shuttingDown = false;
+  private started = false;
   private concurrency: number;
   private rateLimitedUntil: number | null = null;
+  private rateLimitTimer?: NodeJS.Timeout;
   private repoCwd: string;
   private customCallModel?: any;
   private treeLimits: { maxDepth: number; maxChildrenPerTask: number; maxTasksPerTree: number };
@@ -201,6 +207,22 @@ export class TaskManager extends EventEmitter {
     return `approval_${Date.now()}_${randomBytes(4).toString('hex')}`;
   }
 
+  /**
+   * Start queued work restored from disk. Call this once after listeners are
+   * attached so a fresh dashboard does not strand tasks that were queued when
+   * the previous process exited.
+   */
+  start(): void {
+    if (this.started || this.shuttingDown) return;
+    this.started = true;
+    for (const task of this.tasks.values()) {
+      if (task.status === 'queued' && !this.queue.includes(task.id)) {
+        this.queue.push(task.id);
+      }
+    }
+    this.processQueue();
+  }
+
   create(goal: string, opts: CreateTaskOpts = {}): Task {
     // Handle read-only override
     if (opts.readOnly) {
@@ -239,6 +261,8 @@ export class TaskManager extends EventEmitter {
     this.tasks.set(id, task);
     this.logs.set(id, []);
     this.logSeq.set(id, 0);
+    this.logSeqReady.add(id);
+    this.logHistoryLoaded.add(id);
 
     // Add to queue
     this.queue.push(id);
@@ -297,6 +321,8 @@ export class TaskManager extends EventEmitter {
     this.tasks.set(id, task);
     this.logs.set(id, []);
     this.logSeq.set(id, 0);
+    this.logSeqReady.add(id);
+    this.logHistoryLoaded.add(id);
 
     this.queue.push(id);
 
@@ -528,14 +554,20 @@ export class TaskManager extends EventEmitter {
   }
 
   private processQueue(): void {
+    if (this.shuttingDown) return;
+
     // Check rate limit
     if (this.rateLimitedUntil && Date.now() < this.rateLimitedUntil) {
       // Still rate limited, don't start new tasks
       return;
     }
 
-    // Start tasks up to concurrency limit
-    while (this.running.size < this.concurrency && this.queue.length > 0) {
+    // Start tasks up to concurrency limit. Tasks blocked on a write lock are
+    // deferred to the back of the queue; only scan the tasks that were already
+    // queued so a blocked task can never spin this loop forever.
+    const queuedAtStart = this.queue.length;
+    const deferred: string[] = [];
+    for (let i = 0; i < queuedAtStart && this.running.size < this.concurrency; i++) {
       const taskId = this.queue.shift();
       if (!taskId) break;
 
@@ -548,27 +580,44 @@ export class TaskManager extends EventEmitter {
       // Check write lock availability
       const isWriteCapable = task.policy !== 'read_only';
       if (isWriteCapable && this.writeLocks.has(task.cwd)) {
-        // Re-queue at end (will be retried later)
-        this.queue.push(taskId);
+        // Defer, but do not block unrelated tasks later in the queue.
+        deferred.push(taskId);
         continue;
       }
 
       this.running.add(taskId);
-      this.runTask(taskId).finally(() => {
-        this.running.delete(taskId);
-        this.processQueue(); // Process next in queue
-      });
+      const run = this.runTask(taskId);
+      this.activeRuns.set(taskId, run);
+      void run
+        .catch(error => {
+          const current = this.tasks.get(taskId);
+          if (current && (current.status === 'running' || current.status === 'waiting_approval')) {
+            current.error = {
+              code: 'execution_error',
+              message: error instanceof Error ? error.message : String(error),
+            };
+            this.updateStatus(taskId, 'failed');
+          }
+        })
+        .finally(() => {
+          this.activeRuns.delete(taskId);
+          this.running.delete(taskId);
+          this.processQueue(); // Process next in queue
+        });
     }
+    if (deferred.length > 0) this.queue.push(...deferred);
   }
 
   private async runTask(taskId: string): Promise<void> {
     const task = this.tasks.get(taskId);
     if (!task) return;
 
-    // Acquire write lock for write-capable tasks
+    // Acquire write lock for write-capable tasks. Keep the repository path: a
+    // worktree task changes `task.cwd`, but the lock is keyed by the shared repo.
     const isWriteCapable = task.policy !== 'read_only';
+    const lockCwd = task.cwd;
     if (isWriteCapable) {
-      this.writeLocks.set(task.cwd, taskId);
+      this.writeLocks.set(lockCwd, taskId);
     }
 
     // Create abort controller
@@ -654,7 +703,13 @@ export class TaskManager extends EventEmitter {
         }
         this.updateStatus(taskId, 'done');
       } else if (result.outcome === 'cancelled') {
-        this.updateStatus(taskId, 'cancelled');
+        if (this.shuttingDown) {
+          task.error = { code: 'interrupted', message: 'Process shutting down' };
+          task.resumable = true;
+          this.updateStatus(taskId, 'failed');
+        } else {
+          this.updateStatus(taskId, 'cancelled');
+        }
       } else {
         task.error = result.error;
         task.resumable = result.error?.code === 'max_steps' || result.error?.code === 'interrupted';
@@ -673,6 +728,13 @@ export class TaskManager extends EventEmitter {
             type: 'info',
             content: `Rate limited, pausing queue for 1 minute`,
           });
+          if (this.rateLimitTimer) clearTimeout(this.rateLimitTimer);
+          this.rateLimitTimer = setTimeout(() => {
+            this.rateLimitTimer = undefined;
+            this.rateLimitedUntil = null;
+            this.processQueue();
+          }, 60_000);
+          this.rateLimitTimer.unref?.();
         }
       }
 
@@ -688,8 +750,8 @@ export class TaskManager extends EventEmitter {
     } finally {
       this.abortControllers.delete(taskId);
       // Release write lock
-      if (isWriteCapable && this.writeLocks.get(task.cwd) === taskId) {
-        this.writeLocks.delete(task.cwd);
+      if (isWriteCapable && this.writeLocks.get(lockCwd) === taskId) {
+        this.writeLocks.delete(lockCwd);
       }
       this.scheduleSave();
     }
@@ -741,12 +803,42 @@ export class TaskManager extends EventEmitter {
     this.scheduleSave();
   }
 
+  private ensureLogSeq(taskId: string): void {
+    if (this.logSeqReady.has(taskId)) return;
+    this.logSeqReady.add(taskId);
+    const entries = loadTaskLog(taskId, { tasksDir: this.tasksDir, limit: 1 });
+    const last = entries[entries.length - 1];
+    if (last && Number.isFinite(last.seq)) {
+      this.logSeq.set(taskId, Math.max(this.logSeq.get(taskId) ?? 0, last.seq));
+    }
+  }
+
+  private loadLogHistory(taskId: string): LogEntry[] {
+    const disk = loadTaskLog(taskId, { tasksDir: this.tasksDir });
+    const live = this.logs.get(taskId) ?? [];
+    const bySeq = new Map<number, LogEntry>();
+    for (const entry of disk) bySeq.set(entry.seq, entry);
+    for (const entry of live) bySeq.set(entry.seq, entry);
+    const merged = [...bySeq.values()]
+      .sort((a, b) => a.seq - b.seq)
+      .slice(-this.LOG_BUFFER_SIZE);
+    this.logs.set(taskId, merged);
+    const last = merged[merged.length - 1];
+    if (last) {
+      this.logSeq.set(taskId, Math.max(this.logSeq.get(taskId) ?? 0, last.seq));
+    }
+    this.logSeqReady.add(taskId);
+    this.logHistoryLoaded.add(taskId);
+    return merged;
+  }
+
   log(taskId: string, entry: Omit<LogEntry, 'seq' | 'timestamp'>): void {
     const task = this.tasks.get(taskId);
     if (!task) {
       throw new Error(`Task not found: ${taskId}`);
     }
 
+    this.ensureLogSeq(taskId);
     const seq = (this.logSeq.get(taskId) ?? 0) + 1;
     this.logSeq.set(taskId, seq);
 
@@ -776,15 +868,24 @@ export class TaskManager extends EventEmitter {
       throw new Error(`Task not found: ${taskId}`);
     }
 
-    // Try in-memory buffer first
-    const buffer = this.logs.get(taskId) ?? [];
+    // Load history once per task/process. Older versions only read the in-memory
+    // buffer, so a task reopened after a restart appeared to have no log at all.
+    let buffer = this.logs.get(taskId) ?? [];
+    if (!this.logHistoryLoaded.has(taskId)) {
+      buffer = this.loadLogHistory(taskId);
+    }
+
     const fromSeq = opts?.fromSeq ?? 0;
+    let entries = buffer.filter(entry => entry.seq >= fromSeq);
 
-    let entries = buffer.filter(e => e.seq >= fromSeq);
-
-    // If buffer doesn't have enough history, load from disk
-    if (opts?.fromSeq && buffer.length > 0 && buffer[0]!.seq > fromSeq) {
-      entries = loadTaskLog(taskId, { ...opts, tasksDir: this.tasksDir });
+    // The cached buffer is capped; fetch older rows on demand.
+    if (opts?.fromSeq !== undefined && buffer.length > 0 && buffer[0]!.seq > opts.fromSeq) {
+      const disk = loadTaskLog(taskId, { ...opts, tasksDir: this.tasksDir });
+      const live = buffer.filter(entry => entry.seq >= fromSeq);
+      const bySeq = new Map<number, LogEntry>();
+      for (const entry of disk) bySeq.set(entry.seq, entry);
+      for (const entry of live) bySeq.set(entry.seq, entry);
+      entries = [...bySeq.values()].sort((a, b) => a.seq - b.seq);
     }
 
     if (opts?.limit && entries.length > opts.limit) {
@@ -891,13 +992,48 @@ export class TaskManager extends EventEmitter {
   }
 
   async shutdown(opts?: { graceMs?: number }): Promise<void> {
+    this.shuttingDown = true;
+    this.queue = [];
+    if (this.rateLimitTimer) {
+      clearTimeout(this.rateLimitTimer);
+      this.rateLimitTimer = undefined;
+    }
+    this.rateLimitedUntil = null;
+
+    // Release anything waiting on a human decision so the agent can unwind.
+    for (const approval of this.approvals.values()) {
+      approval.resolver(false);
+    }
+    this.approvals.clear();
+
+    // Abort active model calls.
+    for (const controller of this.abortControllers.values()) {
+      controller.abort(new Error('Process shutting down'));
+    }
+
+    const runs = [...this.activeRuns.values()];
+    if (runs.length > 0) {
+      const graceMs = Math.max(0, opts?.graceMs ?? 2000);
+      await new Promise<void>(resolve => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve();
+        };
+        const timer = setTimeout(finish, graceMs);
+        Promise.allSettled(runs).then(finish, finish);
+      });
+    }
+
     // Flush pending save
     if (this.saveDebounceTimer) {
       clearTimeout(this.saveDebounceTimer);
-      this.save();
+      this.saveDebounceTimer = null;
     }
 
-    // Mark running tasks as interrupted
+    // Any task still running after the grace period is interrupted, not lost.
     for (const task of this.tasks.values()) {
       if (task.status === 'running' || task.status === 'waiting_approval') {
         task.status = 'failed';

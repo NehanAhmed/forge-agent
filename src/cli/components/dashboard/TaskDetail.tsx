@@ -1,135 +1,125 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import type { Task } from '../../../core/task.js';
-import type { LogEntry } from '../../../core/context.js';
+import type { LogDisplayLine } from '../../../ui/log-view.js';
+import type { Glyphs, Theme } from '../../../ui/theme.js';
+import { logColor } from '../../../ui/theme.js';
 import { getStatusGlyph } from '../../../ui/status-glyphs.js';
+import { cellWidth, truncateCells } from '../../../ui/text.js';
+import { formatCost, formatDuration, statusLabel, taskElapsed } from '../../../ui/format.js';
 
 export interface TaskDetailProps {
   task: Task;
-  entries: LogEntry[];
-  atBottom: boolean;
+  lines: LogDisplayLine[];
   hasNewBelow: boolean;
-  onScrollUp: () => void;
-  onScrollDown: () => void;
+  follow: boolean;
+  loading: boolean;
+  error: string | null;
   width: number;
   height: number;
-  useAscii: boolean;
-  onApprove: (id: string) => void;
-  onDeny: (id: string) => void;
+  theme: Theme;
+  glyphs: Glyphs;
+  ascii: boolean;
+  now: number;
 }
 
-function formatEntry(entry: LogEntry, width: number): string {
-  const maxLen = width - 6;
-  let text = entry.content;
-  if (text.length > maxLen) {
-    text = text.slice(0, maxLen - 3) + '…';
+function reviewLabel(task: Task): string {
+  switch (task.reviewState) {
+    case 'pending_review': return 'review ready';
+    case 'merged': return 'merged';
+    case 'discarded': return 'discarded';
+    case 'conflict': return 'conflict';
+    case 'needs_attention': return 'needs attention';
+    case 'none': return '';
   }
-  return text;
 }
 
-export function TaskDetail({ task, entries, atBottom, hasNewBelow, width, useAscii }: TaskDetailProps) {
-  const glyph = getStatusGlyph(task.status, useAscii);
+export function TaskDetail({
+  task,
+  lines,
+  hasNewBelow,
+  follow,
+  loading,
+  error,
+  width,
+  height,
+  theme,
+  glyphs,
+  ascii,
+  now,
+}: TaskDetailProps) {
+  const statusGlyph = getStatusGlyph(task.status, ascii);
+  const statusText = statusLabel(task.status);
+  const elapsed = taskElapsed(task, now);
+  const review = reviewLabel(task);
 
-  const cost = task.usage.cost > 0 ? `$${task.usage.cost.toFixed(2)}` : '$0.00';
-  const requests = `${task.usage.requests}/60`;
+  const metaParts = [
+    elapsed !== null ? formatDuration(elapsed) : '',
+    task.usage.requests > 0 ? `${task.usage.requests} req` : '',
+    formatCost(task.usage.cost),
+    task.worktree?.branch ?? '',
+    review,
+    !follow ? 'paused' : '',
+    hasNewBelow && !follow ? 'new below' : '',
+  ].filter(Boolean);
+  const meta = metaParts.join(` ${glyphs.bullet} `);
 
-  const elapsed = task.startedAt && task.status !== 'done' && task.status !== 'failed' && task.status !== 'cancelled'
-    ? Math.floor((Date.now() - task.startedAt) / 1000)
-    : task.finishedAt && task.startedAt
-      ? Math.floor((task.finishedAt - task.startedAt) / 1000)
-      : null;
+  const statusDetail = task.statusDetail && task.status !== 'done' ? task.statusDetail : '';
+  const secondLine = task.error
+    ? `[${task.error.code}] ${task.error.message}`
+    : [statusDetail, meta].filter(Boolean).join(` ${glyphs.bullet} `);
+
+  const titleWidth = Math.max(10, width - cellWidth(statusText) - 4);
+  const title = `#${task.displayId} ${task.goal}`;
+  const logHeight = Math.max(1, height - 3);
+  const visibleLines = lines.slice(-logHeight);
 
   return (
-    <Box flexDirection="column">
-      {/* Compact header */}
-      <Box marginBottom={1}>
-        <Text bold>
-          {glyph} #{task.displayId} {task.goal}
+    <Box
+      flexDirection="column"
+      width={width}
+      height={height}
+      overflow="hidden"
+      aria-label={`Task ${task.displayId}: ${task.goal}. Status ${statusText}.`}
+    >
+      <Box width={width} justifyContent="space-between">
+        <Text bold>{truncateCells(title, titleWidth)}</Text>
+        <Text color={task.status === 'failed' ? theme.error : task.status === 'waiting_approval' ? theme.warning : theme.muted}>
+          {statusGlyph} {statusText}
         </Text>
-        <Text dimColor>
-          {'  '}[{task.status}]
-          {task.statusDetail && ` ${task.statusDetail}`}
-          {'  '}{cost} · {requests}
-          {elapsed !== null && ` · ${elapsed}s`}
-          {task.worktree && ` · ${task.worktree.branch}`}
-        </Text>
-        {task.reviewState === 'pending_review' && (
-          <Text color="yellowBright"> Review ready · /diff · /merge · /discard</Text>
-        )}
-        {task.reviewState === 'merged' && (
-          <Text color="greenBright"> Review: merged ✓</Text>
-        )}
-        {task.reviewState === 'discarded' && (
-          <Text color="redBright"> Review: discarded</Text>
-        )}
-        {task.error && (
-          <Text color="redBright"> Error: [{task.error.code}] {task.error.message}</Text>
-        )}
       </Box>
 
-      {/* Log entries */}
-      {entries.map(entry => (
-        <LogLine key={entry.seq} entry={entry} width={width} />
-      ))}
+      <Box width={width}>
+        <Text
+          dimColor={!task.error}
+          color={task.error ? theme.error : undefined}
+          wrap="truncate"
+        >
+          {truncateCells(secondLine, width)}
+        </Text>
+      </Box>
 
-      {/* Scroll indicators */}
-      {hasNewBelow && (
-        <Box marginTop={1}>
-          <Text color="yellowBright">▼ new output below</Text>
-        </Box>
-      )}
-      {!atBottom && !hasNewBelow && (
-        <Box marginTop={1}>
-          <Text dimColor>▲ scrolled up</Text>
-        </Box>
+      <Text dimColor>{glyphs.separator.repeat(Math.max(1, width))}</Text>
+
+      {error ? (
+        <Text color={theme.error} wrap="truncate">Could not load log: {truncateCells(error, Math.max(1, width - 20))}</Text>
+      ) : loading && lines.length === 0 ? (
+        <Text dimColor>{ascii ? 'Loading log...' : 'Loading log…'}</Text>
+      ) : visibleLines.length === 0 ? (
+        <Text dimColor>No output yet.</Text>
+      ) : (
+        visibleLines.map((line, index) => {
+          const available = Math.max(1, width - cellWidth(line.prefix));
+          return (
+            <Box key={`${line.seq}-${index}`} width={width}>
+              <Text dimColor>{line.prefix}</Text>
+              <Text color={logColor(line.entry.type, theme)} wrap="truncate">
+                {truncateCells(line.text, available)}
+              </Text>
+            </Box>
+          );
+        })
       )}
     </Box>
   );
-}
-
-function LogLine({ entry, width }: { entry: LogEntry; width: number }) {
-  const maxLen = width - 4;
-  let text = entry.content;
-  if (text.length > maxLen) {
-    text = text.slice(0, maxLen - 3) + '…';
-  }
-
-  switch (entry.type) {
-    case 'assistant':
-      return (
-        <Box marginTop={1}>
-          <Text color="white">{text}</Text>
-        </Box>
-      );
-    case 'reasoning':
-      return (
-        <Box marginTop={1} paddingLeft={2}>
-          <Text dimColor italic>{text}</Text>
-        </Box>
-      );
-    case 'tool_call':
-      return (
-        <Box marginTop={1}>
-          <Text color="yellowBright">⚡ {text}</Text>
-        </Box>
-      );
-    case 'tool_result':
-      return (
-        <Box paddingLeft={2}>
-          <Text color="greenBright" dimColor>{text}</Text>
-        </Box>
-      );
-    case 'info':
-      return (
-        <Box marginTop={1}>
-          <Text color="magentaBright">ℹ {text}</Text>
-        </Box>
-      );
-    case 'error':
-      return (
-        <Box marginTop={1}>
-          <Text color="redBright">✗ {text}</Text>
-        </Box>
-      );
-  }
 }
