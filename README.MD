@@ -7,7 +7,7 @@ Forge uses OpenRouter and saves conversation sessions locally so you can resume 
 
 ## Requirements
 
-- Node.js 20 or newer
+- Node.js 22 or newer
 - An OpenRouter API key
 - `ripgrep` (`rg`) installed and available on your `PATH` for code search
 
