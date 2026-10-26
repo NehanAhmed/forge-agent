@@ -21,13 +21,13 @@ export const CODING_MODELS: ModelInfo[] = [
     description: 'Optimized for speed, good for quick coding tasks',
   },
   {
-    id: 'qwen/qwen3.8-27b:free',
+    id: 'nvidia/nemotron-3.5-super-vl:free',
     name: 'Qwen 3.8 27B',
     description: 'Balanced coding and general reasoning (current default)',
   },
 ];
 
-export const DEFAULT_MODEL_ID = CODING_MODELS[3]?.id ?? CODING_MODELS[0]?.id ?? 'qwen/qwen3.8-27b:free';
+export const DEFAULT_MODEL_ID = CODING_MODELS[0]?.id || "qwen/qwen3.8-27b:free";
 
 export function getModelById(id: string): ModelInfo | undefined {
   return CODING_MODELS.find(m => m.id === id);
