@@ -17,6 +17,10 @@ import { ModelPickerModal } from './components/ModelPickerModal.js';
 import type { AgentContext, ApprovalRequest } from '../core/context.js';
 import { createBudget } from '../core/budget.js';
 import { getClient } from '../core/client.js';
+import { getConfig } from '../core/config.js';
+import { Dashboard } from './components/dashboard/Dashboard.js';
+import { TaskManager } from '../core/task-manager.js';
+import { InProcessTaskClient } from '../core/task-client.js';
 
 // --- config command: runs before anything else, exits early if matched ---
 const cliArgs = process.argv.slice(2);
@@ -27,10 +31,18 @@ if (cliArgs[0] === 'config' && cliArgs[1] === 'set-key') {
     process.exit(1);
   }
   const configDir = path.join(os.homedir(), '.forge');
+  const configPath = path.join(configDir, 'config.json');
   fs.mkdirSync(configDir, { recursive: true });
+  let existing: Record<string, unknown> = {};
+  try {
+    existing = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+  } catch {
+    // Start from an empty object when the file is missing or invalid.
+  }
   fs.writeFileSync(
-    path.join(configDir, 'config.json'),
-    JSON.stringify({ apiKey: key }, null, 2)
+    configPath,
+    JSON.stringify({ ...existing, apiKey: key }, null, 2),
+    { encoding: 'utf-8', mode: 0o600 },
   );
   console.log('API key saved.');
   process.exit(0);
@@ -275,6 +287,7 @@ function App() {
       signal: abortController.signal,
       state: createStateAccessor(sessionId),
       policy: 'ask',
+      maxDepth: getConfig().children.maxDepth,
       budget: createBudget({ maxRequests: 1000, maxTokens: 10_000_000 }), // Generous limits for interactive
       log: (entry) => {
         // Map log entries to LogEvent format
@@ -345,6 +358,58 @@ function App() {
   );
 }
 
-render(<App />);
+async function main() {
+  const isChat = cliArgs.includes('chat');
+
+  if (isChat) {
+    render(<App />);
+    return;
+  }
+
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    console.error(
+      'Forge dashboard needs an interactive terminal. Run `forge chat` for the legacy chat UI.',
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  // Validate credentials before entering the alternate screen. Otherwise the
+  // first task would exit from inside the Ink render with an invisible error.
+  getClient();
+
+  // Construct the manager before rendering so events are never missed and the
+  // dashboard can shut it down cleanly after Ink unmounts.
+  const config = getConfig();
+  const manager = new TaskManager({
+    treeLimits: {
+      maxDepth: config.children.maxDepth,
+      maxChildrenPerTask: config.children.maxPerTask,
+      maxTasksPerTree: config.children.maxPerTree,
+    },
+  });
+  const client = new InProcessTaskClient(manager);
+
+  const instance = render(<Dashboard client={client} />, {
+    alternateScreen: config.ui.alternateScreen,
+    exitOnCtrlC: false,
+    maxFps: 30,
+  });
+
+  try {
+    // Now that the dashboard is mounted, pick up tasks that were queued when the
+    // previous process exited.
+    manager.start();
+
+    await instance.waitUntilExit();
+  } finally {
+    await manager.shutdown({ graceMs: 2000 });
+  }
+}
+
+void main().catch(error => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+});
 
 export { App };

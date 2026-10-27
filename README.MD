@@ -7,7 +7,7 @@ Forge uses OpenRouter and saves conversation sessions locally so you can resume 
 
 ## Requirements
 
-- Node.js 20 or newer
+- Node.js 22 or newer
 - An OpenRouter API key
 - `ripgrep` (`rg`) installed and available on your `PATH` for code search
 
@@ -68,16 +68,23 @@ cd path/to/your-project
 forge
 ```
 
-Enter a task at the prompt, for example: `Find and fix the bug in the login flow.` Forge streams its response and tool activity, and displays token usage and estimated cost for the current session.
+This opens the **dashboard**, where you can queue tasks, watch their logs, and
+approve tool calls while work runs in the background. Type a goal at the prompt,
+for example: `Find and fix the bug in the login flow.`
 
-Resume the latest session, or a specific session by ID:
+The original single-conversation interface is still available:
 
 ```sh
-forge --resume
-forge --resume SESSION_ID
+forge chat
+forge chat --resume
+forge chat --resume SESSION_ID
 ```
 
-## In-session commands
+The chat UI streams its response and tool activity inline, and displays token
+usage and estimated cost for the current session. Resuming restores the latest
+saved chat session, or the one whose ID you pass.
+
+## Chat in-session commands
 
 | Command | Action |
 | --- | --- |
@@ -85,12 +92,14 @@ forge --resume SESSION_ID
 | `/sessions` | List saved sessions |
 | `/new` | Start a new session |
 | `/clear` | Clear the current display and usage counters |
+| `/models` | Open the model picker |
+| `/model <id>` | Switch to a specific model |
 | `/exit` | Exit Forge |
 
 ## Capabilities and safety
 
 - Read files and search source code with `rg`.
-- Run shell commands and create or edit project files. Forge asks for confirmation before running shell commands or writing/editing files; respond with `y` or `n` to approve or deny each action.
+- Run shell commands and create or edit project files. In the chat UI, Forge asks for confirmation before running shell commands or writing/editing files; respond with `y` or `n`. In the dashboard, the same requests appear in the approvals inbox (`a`).
 - Delegate isolated investigations to a read-only sub-agent.
 - Save and resume conversations from the project directory.
 - **Git operations**: Inspect repository status (`git_status`), view diffs (`git_diff`), stage files (`git_add`), and create commits (`git_commit`) — all without leaving the agent session.
@@ -115,19 +124,125 @@ Forge includes four git tools that let the agent manage version control directly
 - No destructive operations: no `push`, `reset`, `--force`, `--amend`, `--no-verify`, or `commit -a`.
 - Git hooks run normally; hook failures are returned as errors.
 
+## Dashboard
+
+When you run `forge` without arguments, it starts in **dashboard mode** — a task-oriented TUI where you type goals and watch tasks run in the background.
+
+### Launching the Dashboard
+
+```sh
+forge              # Dashboard mode (default)
+forge chat         # Legacy interactive session mode
+```
+
+### Dashboard Commands
+
+| Command | Action |
+| --- | --- |
+| `plain text` | Create a new task with that goal |
+| `/open <n>` | Select task and show its log |
+| `/cancel <n>` | Cancel a task and all descendants |
+| `/approve <n>` | Approve oldest pending approval for task `n` |
+| `/approve all` | Approve all pending approvals (requires confirmation) |
+| `/deny <n>` | Deny oldest pending approval for task `n` |
+| `/diff <n>` | Show the task's diff in a scrollable overlay |
+| `/merge <n>` | Merge the task's branch into main (requires confirmation) |
+| `/discard <n>` | Discard the task's worktree and branch (requires confirmation) |
+| `/resume <n>` | Resume an interrupted task |
+| `/collapse <n>` | Collapse a task's children in the tree |
+| `/expand <n>` | Expand a task's children in the tree |
+| `/new [--read-only] [--shared] [--policy ask\|auto_in_worktree\|read_only] <goal>` | Create a task with explicit options |
+| `/help` | List commands |
+| `/quit` | Exit the dashboard |
+
+### Keyboard Navigation
+
+The dashboard is keyboard-first; no mouse support is required (Ink has no mouse API).
+
+| Context | Keys | Action |
+| --- | --- | --- |
+| Global | `Tab` / `Shift+Tab` | Cycle list ↔ input; detail returns to the list |
+| Global | `↑` / `↓` | Move selection (list/input) or scroll the log (detail) |
+| Global | `PgUp` / `PgDn` | Scroll the log one page |
+| Global | `?` (not while typing) | Help overlay |
+| Global | `Ctrl+C` | Quit; confirms first when work is active |
+| Global | `Esc` | Close overlay → blur input → back to list |
+| List | `j` / `k`, `Home` / `End`, `g` / `G` | Move selection / first / last |
+| List | `←` / `h`, `→` / `l` | Collapse / expand children |
+| List | `Enter` | Open the selected task's detail and log |
+| List | `a` | Approvals inbox |
+| List | `c` / `r` / `m` / `x` | Cancel / resume / merge / discard |
+| List | `D` | Show the task diff |
+| List | `s` | Cycle filter: all → active → attention |
+| List | `f` / `v` | Follow the log tail / toggle compact-verbose log |
+| List | `/` | Focus the input with a `/` command |
+| List | `q` | Quit; confirms first when work is active |
+| Detail | `j` / `k`, `PgUp` / `PgDn`, `g` / `G` | Scroll / page / top-bottom |
+| Detail | `f` / `v` | Follow the log tail / toggle compaction |
+| Detail | `Esc` | Back to the list |
+| Input | `Enter` | Submit (double-submit guarded) |
+| Input | `Esc` | Blur to the list |
+| Input | `Ctrl+P` / `Ctrl+N` | Previous / next history entry |
+| Input | `Ctrl+U` | Clear the line |
+| Approvals | `↑` / `↓`, `Enter` / `y`, `n` / `x`, `A`, `Esc` | Select / approve / deny / approve all / close |
+| Approvals (confirm all) | `y`; `n` / `x` / `Esc` | Approve all; cancel (other keys are ignored) |
+| Confirm | `y`; `n` / `Esc` / `Enter` | Confirm; cancel |
+| Diff | `↑` / `↓`, `PgUp` / `PgDn`, `g` / `G`, `Esc` | Scroll / page / top-bottom / close |
+
+Destructive actions (cancel, merge, discard, quit with active work) show the task,
+the consequence, and a `y confirm · n cancel` prompt in the key bar. Only that prompt
+accepts `y`/`n`; ordinary typing can never trigger a confirmation.
+
+Pasting multi-line text is supported and is flattened into the input. Broken or
+untrusted log strings are stripped of terminal control sequences and truncated by
+display cells, so they cannot corrupt the layout.
+
+### Dashboard configuration
+
+Forge reads `~/.forge/config.json`. UI options are optional and default to the values
+shown:
+
+```json
+{
+  "ui": {
+    "ascii": false,
+    "timestamps": true,
+    "showCost": true,
+    "compactLog": true,
+    "alternateScreen": true,
+    "logWindow": 2000
+  }
+}
+```
+
+- `ascii: true` swaps unicode glyphs for plain ASCII.
+- `timestamps: false` hides log timestamps; `showCost: false` hides cost labels.
+- `compactLog: false` starts the log in wrapped/verbose mode (`v` toggles it live).
+- `logWindow` caps how many recent log entries are kept for the selected task.
+- `NO_COLOR=1` disables semantic colors (the selection marker and labels remain).
+- `INK_SCREEN_READER=true` forces a linear single-pane layout, ASCII glyphs, and no
+  timer-driven redraws.
+- `alternateScreen: false` keeps the dashboard in the normal terminal buffer.
+
+### Child Tasks
+
+Tasks can spawn child tasks using the `spawn_task`, `wait_for_tasks`, and `get_task` tools. These appear nested under their parent with shared budgets and inherit strict policy limits.
+
 ## Local data
 
-Conversation state is stored in `.agent-sessions/` under the working directory. Session titles and metadata are stored in `.forge/meta/` under that directory. The API key saved by `forge config set-key` is saved in `~/.forge/config.json`.
+Chat conversation state is stored in `.agent-sessions/` under the working directory. Session titles and metadata are stored in `.forge/meta/` under that directory.
+
+Dashboard task state and logs are stored under `~/.forge/tasks/`, and isolated task worktrees are created under `~/.forge/worktrees/`, so they remain available when you start Forge from another project. The API key saved by `forge config set-key` is stored in `~/.forge/config.json`; that command preserves any existing UI settings in the same file.
 
 ## Development
 
 ```sh
 pnpm install
 pnpm build
-pnpm eval
+pnpm test
 ```
 
-`pnpm build` compiles the TypeScript sources into `dist/`. `pnpm eval` runs the evaluation runner. The package does not currently define an automated test suite.
+`pnpm build` compiles the TypeScript sources into `dist/`. `pnpm test` runs the full test suite.
 
 ## License
 

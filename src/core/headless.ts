@@ -4,6 +4,7 @@ import { buildSystemPrompt, MAX_ITERATIONS } from '../core/constants.js';
 import { createStateAccessor } from '../core/state.js';
 import type { AgentContext } from '../core/context.js';
 import { DEFAULT_MODEL_ID } from '../core/models.js';
+import { StreamCoalescer } from '../core/stream-buffer.js';
 
 export interface RunResult {
   outcome: 'done' | 'failed' | 'cancelled';
@@ -99,15 +100,23 @@ export async function runAgentHeadless(
 
       // Collect the full text (summary)
       let summary = '';
+      const stream = new StreamCoalescer({
+        maxChars: 512,
+        maxDelayMs: 120,
+        onFlush: (text) => ctx.log({ type: 'assistant', content: text }),
+      });
       try {
         for await (const delta of result.getTextStream()) {
           if (ctx.signal.aborted) {
+            stream.flush();
             return { outcome: 'cancelled', usage };
           }
           summary += delta;
-          ctx.log({ type: 'assistant', content: delta });
+          stream.push(delta);
         }
+        stream.flush();
       } catch (err: any) {
+        stream.flush();
         if (ctx.signal.aborted) {
           return { outcome: 'cancelled', usage };
         }

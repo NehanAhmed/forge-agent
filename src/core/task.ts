@@ -29,8 +29,10 @@ export interface Task {
   status: TaskStatus;
   statusDetail?: string;
   sessionId: string;
-  parentId?: string;         // Reserved for Spec 2
-  depth: number;             // 0 for root tasks
+  parentId?: string;
+  depth: number;
+  treeId: string;
+  displayId: string;
   cwd: string;
   isolation: Isolation;
   policy: ApprovalPolicy;
@@ -76,6 +78,10 @@ export function createTask(
     cwd?: string;
     isolation?: Isolation;
     policy?: ApprovalPolicy;
+    parentId?: string;
+    depth?: number;
+    treeId?: string;
+    displayId?: string;
   } = {}
 ): Task {
   return {
@@ -83,8 +89,10 @@ export function createTask(
     goal,
     status: 'queued',
     sessionId: opts.sessionId ?? id,
-    parentId: undefined,
-    depth: 0,
+    parentId: opts.parentId,
+    depth: opts.depth ?? 0,
+    treeId: opts.treeId ?? id,
+    displayId: opts.displayId ?? '1',
     cwd: opts.cwd ?? process.cwd(),
     isolation: opts.isolation ?? 'worktree',
     policy: opts.policy ?? 'ask',

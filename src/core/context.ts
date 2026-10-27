@@ -1,5 +1,6 @@
 import type { StateAccessor } from '@openrouter/agent';
 import type { getClient } from './client.js';
+import type { TaskStatus, TaskUsage, TaskError } from './task.js';
 
 export type ApprovalPolicy = 'ask' | 'auto_in_worktree' | 'read_only';
 
@@ -31,6 +32,10 @@ export interface LogEntry {
 
 export interface AgentContext {
   taskId?: string;           // undefined for legacy interactive session
+  parentId?: string;
+  depth?: number;
+  maxDepth?: number;
+  treeId?: string;
   cwd: string;               // absolute, already resolved
   signal: AbortSignal;
   state: StateAccessor;
@@ -39,4 +44,7 @@ export interface AgentContext {
   log: (entry: Omit<LogEntry, 'seq' | 'timestamp'>) => void;
   requestApproval: (req: ApprovalRequest) => Promise<boolean>;
   callModel: ReturnType<typeof getClient>['callModel'];
+  spawnChild?: (goal: string, readOnly?: boolean) => Promise<{ id: string; displayId: string }>;
+  waitForChildren?: (ids: string[], timeoutMs?: number) => Promise<Array<{ id: string; status: TaskStatus; summary?: string; error?: TaskError }>>;
+  getDescendant?: (id: string) => Promise<{ id: string; status: TaskStatus; usage: TaskUsage; summary?: string; error?: TaskError } | undefined>;
 }
