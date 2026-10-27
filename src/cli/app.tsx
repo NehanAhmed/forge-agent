@@ -396,12 +396,15 @@ async function main() {
     maxFps: 30,
   });
 
-  // Now that the dashboard is mounted, pick up tasks that were queued when the
-  // previous process exited.
-  manager.start();
+  try {
+    // Now that the dashboard is mounted, pick up tasks that were queued when the
+    // previous process exited.
+    manager.start();
 
-  await instance.waitUntilExit();
-  await manager.shutdown({ graceMs: 2000 });
+    await instance.waitUntilExit();
+  } finally {
+    await manager.shutdown({ graceMs: 2000 });
+  }
 }
 
 void main().catch(error => {

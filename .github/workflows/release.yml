@@ -69,12 +69,26 @@ jobs:
 
       - name: Publish to npm
         shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
+          TAG_COMMIT=$(git rev-parse HEAD)
+
           if npm view "@nehanahmed/forge@$VERSION" version >/dev/null 2>&1; then
-            echo "Version $VERSION is already published; skipping npm publish."
+            PUBLISHED_HEAD=$(npm view "@nehanahmed/forge@$VERSION" gitHead 2>/dev/null || true)
+            if [ -z "$PUBLISHED_HEAD" ] || [ "$PUBLISHED_HEAD" != "$TAG_COMMIT" ]; then
+              echo "Refusing to continue: version $VERSION is already published from ${PUBLISHED_HEAD:-an unknown commit}, not from $TAG_COMMIT." >&2
+              exit 1
+            fi
+            echo "Version $VERSION is already published from this commit; skipping npm publish."
           else
-            npm publish --provenance --access public
+            if [[ "$VERSION" == *-* ]]; then
+              NPM_TAG=next
+            else
+              NPM_TAG=latest
+            fi
+            npm publish --tag "$NPM_TAG" --provenance --access public
           fi
 
       - name: Create GitHub Release

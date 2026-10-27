@@ -113,7 +113,7 @@ The preferred setup is npm Trusted Publishing through GitHub Actions OIDC:
 - Workflow permissions: `contents: write`, `id-token: write`
 - npm CLI: 11.5.1 or newer (the release workflow uses Node 24)
 
-If Trusted Publishing is not available, use a granular npm token stored as the `NPM_TOKEN` GitHub secret. Limit it to this package and enable 2FA bypass only if required.
+If Trusted Publishing is not available, use a granular npm token stored as the `NPM_TOKEN` GitHub secret. The release workflow maps it to `NODE_AUTH_TOKEN` only for the publish step. When OIDC is available, npm uses OIDC first; the token is the fallback. Limit the token to this package and enable 2FA bypass only if required.
 
 Do not commit npm tokens or GitHub tokens.
 
