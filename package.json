@@ -10,7 +10,6 @@
     "postbuild": "node ./scripts/add-shebang.js",
     "prepack": "npm run build",
     "prepublishOnly": "npm test",
-    "eval": "tsx evals/runner.ts",
     "dev": "tsx watch src/cli/app.tsx --onSuccess \"node ./scripts/add-shebang.js\""
   },
   "bin": {
@@ -45,7 +44,6 @@
     "@openrouter/agent": "^0.11.0",
     "dotenv": "^17.4.2",
     "ink": "^7.1.1",
-    "ink-big-text": "^2.0.0",
     "ink-gradient": "^4.0.1",
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
