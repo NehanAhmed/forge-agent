@@ -9,6 +9,9 @@ branch, so you can queue several jobs at once without them stepping on your work
 then review the diff and merge the one you want. Chat is still there when you just want to
 talk to the agent one message at a time.
 
+Worktrees need a git repository. If one cannot be created, the task runs in your checkout
+instead, where an approved edit changes your files directly.
+
 ## Requirements
 
 - Node.js 22 or newer
@@ -23,7 +26,9 @@ npm install --global @nehanahmed/forge
 forge config set-key <your-openrouter-key>
 ```
 
-The key is saved to `~/.forge/config.json` with owner-only permissions. You can also set
+The key is saved to `~/.forge/config.json`. Forge sets owner-only permissions when it
+creates the file, but if the file already exists its permissions are left unchanged — run
+`chmod 600 ~/.forge/config.json` first if other users can read it. You can also set
 `OPENROUTER_API_KEY` in your shell, or in a `.env` file in the project you run Forge from.
 
 Install ripgrep with the package manager you already use:
@@ -41,10 +46,14 @@ cd path/to/your-project
 forge
 ```
 
+Commit or stash your work first. Each task branches from `HEAD`, so uncommitted and
+untracked changes are not visible inside it, and merging refuses a main working tree with
+tracked changes.
+
 Forge opens the dashboard. Type a goal, for example `Find and fix the race in the login
 flow`, and press Enter. The task appears in the list with its progress and log; approvals
-show up in the inbox (`a`). When the task finishes, review it with `D`, merge it with `m`,
-or discard it with `x`.
+show up in the inbox (`a`). When the task finishes, press Tab (or Esc) to move focus to the
+list, then review it with `D`, merge it with `m`, or discard it with `x`.
 
 The default model is NVIDIA Nemotron 3 Ultra on OpenRouter's free tier. Run `/models` in
 chat to pick another one.
@@ -98,8 +107,8 @@ session. Commands: `/help`, `/clear`, `/new`, `/sessions`, `/models`, `/model <i
   you approve it.
 - Task branches must be `agent/task-*`, and merges only happen from the dashboard after a
   clean-tree check. Git hooks run normally.
-- Nothing is sent anywhere except OpenRouter, which receives the prompts and tool results
-  needed to do the work.
+- Forge sends model traffic to OpenRouter. Shell commands and git hooks run on your machine
+  and may make their own network requests.
 
 ## Configuration
 

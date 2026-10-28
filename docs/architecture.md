@@ -31,7 +31,9 @@ forge
   renders the dashboard, then starts the queue. Tasks that were queued when the previous
   process exited resume after the UI is mounted.
 - On exit, `TaskManager.shutdown({ graceMs })` stops dequeuing, releases pending
-  approvals, aborts active runs, and marks unfinished tasks as interrupted and resumable.
+  approvals, and aborts active runs. Queued tasks stay queued for the next start; anything
+  still running when the grace period expires is saved as `failed` with
+  `error.code = 'interrupted'` and `resumable: true`.
 
 ## Task engine
 
@@ -60,7 +62,7 @@ dashboard subscribes to those events instead of polling.
 | `running` | The agent loop is executing |
 | `waiting_approval` | Blocked on a tool that needs a decision |
 | `done` | Finished successfully |
-| `failed` | Stopped with an error; resumable |
+| `failed` | Stopped with an error; resumable only when its `resumable` flag is set |
 | `cancelled` | Stopped by the user |
 
 Transitions are enforced in `src/core/task.ts`: `queued → running → done | failed |
@@ -69,7 +71,7 @@ task returns it to `queued`.
 
 ### Approvals
 
-Every tool that can change state goes through `executeWithPolicy` in
+Every write and exec tool goes through `executeWithPolicy` in
 `src/core/approvals.ts`. The policy is per task:
 
 - `ask` — prompt for `run_bash`, file writes, `git_add`, and `git_commit`.
@@ -88,8 +90,8 @@ Tasks with `isolation: 'worktree'` (the default for write-capable work) get:
 
 - A worktree under `~/.forge/worktrees/` on a branch named `agent/task-*`.
 - A checkpoint commit of any remaining changes when the task finishes, so work is not lost
-  to a dirty worktree. A failing hook marks the task `needs_attention` instead of discarding
-  the changes.
+  to a dirty worktree. A failing hook sets the task's `reviewState` to `needs_attention`
+  instead of discarding the changes.
 - Review operations in `src/core/worktree.ts`: diff against the base commit, merge into the
   base branch, or discard the worktree and branch.
 
@@ -107,8 +109,9 @@ one log write and one re-render each.
 
 ## Persistence
 
-- `~/.forge/tasks/` holds a task index and one append-only JSON-lines log per task. Writes
-  are atomic (temp file + rename) and debounced by 500 ms.
+- `~/.forge/tasks/` holds a task index and one append-only JSON-lines log per task. The
+  index is written atomically (temp file + rename) and saved on a 500 ms debounce; task logs
+  are appended to their JSONL file directly.
 - Logs are also kept in a 2,000-entry in-memory ring for the UI; the selected task's log is
   the only one read for display.
 - On startup, tasks that were `running` when the process died are reconciled to a resumable
@@ -129,9 +132,9 @@ one log write and one re-render each.
 | `spawn_sub_agent` | read-only child agent |
 | `spawn_task`, `wait_for_tasks`, `get_task` | task control |
 
-`search_code` shells out to `rg`, so ripgrep must be installed. Path arguments are resolved
-inside the task's working directory, and git paths are validated against the repository
-root before they reach git.
+`search_code` shells out to `rg`, so ripgrep must be installed. File tools and `git_add`
+resolve their paths with `resolveSafePath` before touching the filesystem or git; `git_diff`
+passes its `paths` argument straight to `git diff` without that check.
 
 ## TUI
 

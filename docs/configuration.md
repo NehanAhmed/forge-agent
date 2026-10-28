@@ -107,6 +107,8 @@ need to.
 | `~/.forge/meta/meta.json` | Chat session titles and chosen models | Global |
 | `.agent-sessions/` | Chat session state | Per project |
 
-Forge never adds these to your repository. Deleting the directory for a task removes its
-history; use `/discard <n>` in the dashboard if you also want its worktree and branch
-cleaned up.
+Forge does not stage or commit any of these. It does create `.agent-sessions/` inside the
+project, so add that directory to `.gitignore`. Deleting a task's state directory
+(`~/.forge/tasks/<taskId>/`) removes its session state only; the task index and log stay in
+`~/.forge/tasks/`. Use `/discard <n>` in the dashboard to remove the task's worktree and
+branch.

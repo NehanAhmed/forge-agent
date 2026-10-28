@@ -1,7 +1,7 @@
 {
   "name": "@nehanahmed/forge",
   "version": "0.2.0",
-  "description": "Task-oriented AI coding agent for the terminal: parallel tasks in isolated git worktrees, approval-gated tools, and a live dashboard.",
+  "description": "Task-oriented AI coding agent for the terminal: worktree-isolated tasks, approval-gated tools, and a live dashboard.",
   "license": "MIT",
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
