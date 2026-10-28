@@ -1,7 +1,7 @@
 {
   "name": "@nehanahmed/forge",
   "version": "0.2.0",
-  "description": "A Terminal-based AI agent that can perform tasks and interact with the user.",
+  "description": "Task-oriented AI coding agent for the terminal: parallel tasks in isolated git worktrees, approval-gated tools, and a live dashboard.",
   "license": "MIT",
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
@@ -27,7 +27,10 @@
     "agent",
     "cli",
     "coding-agent",
-    "multi-model"
+    "multi-model",
+    "tui",
+    "worktree",
+    "openrouter"
   ],
   "repository": {
     "type": "git",
@@ -36,7 +39,7 @@
   "author": "Nehan Ahmed",
   "files": [
     "dist",
-    "README.MD",
+    "README.md",
     "LICENSE"
   ],
   "type": "module",
