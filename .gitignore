@@ -2,9 +2,9 @@ node_modules/
 dist/
 .forge/
 .agent-sessions/
-evals/
 .env
-
+tests/temp-git-repo/
+KK.md
 # Ignore Forge task engine state
 .agent/
 .agent/**

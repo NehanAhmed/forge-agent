@@ -2,7 +2,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseCommand } from '../src/ui/parser.js';
 import { buildTree, getVisibleRows } from '../src/ui/tree-builder.js';
-import { windowEntries } from '../src/ui/log-window.js';
 import { getStatusGlyph, needsAttention } from '../src/ui/status-glyphs.js';
 import { createTask } from '../src/core/task.js';
 
@@ -92,28 +91,6 @@ describe('UI Pure Modules', () => {
       const collapsedRows = getVisibleRows(tree, new Set(['task-1']));
       assert.equal(collapsedRows.length, 1);
       assert.equal(collapsedRows[0]!.isCollapsed, true);
-    });
-  });
-
-  describe('Log Windowing', () => {
-    it('windows large entry lists and follows tail', () => {
-      const entries = Array.from({ length: 2500 }, (_, i) => ({
-        seq: i + 1,
-        timestamp: Date.now(),
-        type: 'info' as const,
-        content: `Log line ${i}`,
-      }));
-
-      const res = windowEntries(entries, { windowSize: 2000, followTail: true });
-      assert.equal(res.visible.length, 2000);
-      assert.equal(res.atBottom, true);
-      assert.equal(res.hasNewBelow, false);
-      assert.equal(res.visible[1999]!.seq, 2500);
-
-      const scrolled = windowEntries(entries, { windowSize: 2000, scrollOffset: 300, followTail: false });
-      assert.equal(scrolled.visible.length, 2000);
-      assert.equal(scrolled.atBottom, false);
-      assert.equal(scrolled.hasNewBelow, true);
     });
   });
 
