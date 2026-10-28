@@ -730,7 +730,7 @@ export class TaskManager extends EventEmitter {
         treeId: task.treeId,
         cwd: task.cwd,
         signal: abort.signal,
-        state: createStateAccessor(task.sessionId, getTaskStateDir(taskId)),
+        state: createStateAccessor(task.sessionId, getTaskStateDir(taskId, this.tasksDir)),
         policy: task.policy,
         budget,
         log: (entry) => this.log(taskId, entry),

@@ -227,7 +227,8 @@ describe('Phase 3: Task Model & State Machine', () => {
 
 describe('Phase 4: TaskManager Queue, Concurrency & Lifecycle', () => {
   it('creates, lists, and gets tasks', () => {
-    const manager = new TaskManager({ concurrency: 0, callModel: createFakeModelCall() });
+    const dir = createTempDir('forge-task-ops-');
+    const manager = new TaskManager({ concurrency: 0, repoCwd: dir, tasksDir: path.join(dir, 'tasks'), callModel: createFakeModelCall() });
     const t1 = manager.create('First task');
     const t2 = manager.create('Second task');
 
@@ -239,7 +240,8 @@ describe('Phase 4: TaskManager Queue, Concurrency & Lifecycle', () => {
   });
 
   it('cancelling a queued task removes it and marks it cancelled', async () => {
-    const manager = new TaskManager({ concurrency: 0, callModel: createFakeModelCall() }); // Concurrency 0 means nothing runs automatically
+    const dir = createTempDir('forge-task-cancel-');
+    const manager = new TaskManager({ concurrency: 0, repoCwd: dir, tasksDir: path.join(dir, 'tasks'), callModel: createFakeModelCall() }); // Concurrency 0 means nothing runs automatically
     const task = manager.create('Will cancel');
     assert.equal(task.status, 'queued');
 
@@ -248,7 +250,8 @@ describe('Phase 4: TaskManager Queue, Concurrency & Lifecycle', () => {
   });
 
   it('resumes an interrupted/failed task back to queued', () => {
-    const manager = new TaskManager({ concurrency: 0, callModel: createFakeModelCall() });
+    const dir = createTempDir('forge-task-resume-');
+    const manager = new TaskManager({ concurrency: 0, repoCwd: dir, tasksDir: path.join(dir, 'tasks'), callModel: createFakeModelCall() });
     const task = manager.create('Interrupted task');
 
     // Simulate interruption
@@ -263,7 +266,8 @@ describe('Phase 4: TaskManager Queue, Concurrency & Lifecycle', () => {
   });
 
   it('emits events on task lifecycle changes', () => {
-    const manager = new TaskManager({ concurrency: 0, callModel: createFakeModelCall() });
+    const dir = createTempDir('forge-task-events-');
+    const manager = new TaskManager({ concurrency: 0, repoCwd: dir, tasksDir: path.join(dir, 'tasks'), callModel: createFakeModelCall() });
     const events: string[] = [];
 
     manager.on('task:created', () => events.push('created'));
@@ -422,7 +426,7 @@ describe('Phase 4: TaskManager Queue, Concurrency & Lifecycle', () => {
 
   it('gives write-capable children the parent cwd and shared isolation', async () => {
     const dir = createTempDir('forge-child-shared-');
-    const manager = new TaskManager({ concurrency: 0, callModel: createFakeModelCall() });
+    const manager = new TaskManager({ concurrency: 0, repoCwd: dir, tasksDir: path.join(dir, 'tasks'), callModel: createFakeModelCall() });
 
     try {
       const parent = manager.create('Write-capable parent', {
@@ -517,7 +521,8 @@ describe('Phase 5: Approvals Inbox & Policies', () => {
   });
 
   it('manager manages approval requests and resolution', async () => {
-    const manager = new TaskManager({ concurrency: 0, callModel: createFakeModelCall() });
+    const dir = createTempDir('forge-task-approvals-');
+    const manager = new TaskManager({ concurrency: 0, repoCwd: dir, tasksDir: path.join(dir, 'tasks'), callModel: createFakeModelCall() });
     const task = manager.create('Approval test');
     task.status = 'running';
 
@@ -617,10 +622,12 @@ describe('Phase 6: Git Worktree Isolation & Review', () => {
 
 describe('Security & Hygiene', () => {
   it('atomic persistence round-trips correctly', () => {
+    const dir = createTempDir('forge-persist-');
+    const tasksDir = path.join(dir, 'tasks');
     const task = createTask('persist_test', 'Test goal');
-    saveTaskIndex({ version: 1, tasks: [task] });
+    saveTaskIndex({ version: 1, tasks: [task] }, tasksDir);
 
-    const loaded = loadTaskIndex();
+    const loaded = loadTaskIndex(tasksDir);
     assert.ok(loaded);
     assert.equal(loaded.tasks.length >= 1, true);
     const found = loaded.tasks.find(t => t.id === 'persist_test');
@@ -629,6 +636,8 @@ describe('Security & Hygiene', () => {
   });
 
   it('logs append and load correctly', () => {
+    const dir = createTempDir('forge-persist-log-');
+    const tasksDir = path.join(dir, 'tasks');
     const taskId = `log_test_${Date.now()}`;
     const entry: LogEntry = {
       seq: 1,
@@ -637,8 +646,8 @@ describe('Security & Hygiene', () => {
       content: 'Test log entry',
     };
 
-    appendTaskLog(taskId, entry);
-    const loaded = loadTaskLog(taskId);
+    appendTaskLog(taskId, entry, tasksDir);
+    const loaded = loadTaskLog(taskId, { tasksDir });
     assert.equal(loaded.length, 1);
     assert.equal(loaded[0]?.content, 'Test log entry');
   });
