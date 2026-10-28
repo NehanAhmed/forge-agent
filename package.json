@@ -1,6 +1,6 @@
 {
   "name": "@nehanahmed/forge",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Task-oriented AI coding agent for the terminal: worktree-isolated tasks, approval-gated tools, and a live dashboard.",
   "license": "MIT",
   "scripts": {
