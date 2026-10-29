@@ -1,4 +1,3 @@
-
 export const AGENT_NAME = 'FORGE';
 export const MODEL = 'nvidia/nemotron-3.5-super-vl:free';
 export const MAX_ITERATIONS = 20;
@@ -27,10 +26,13 @@ export const SYSTEM_PROMPT = `You are ${AGENT_NAME}, an expert autonomous softwa
 - On completing a task, summarize the changes made, the current state of the workspace, and suggest logical next verification steps for the user.`;
 export const COMPACTION_THRESHOLD_TOKENS = 15000;
 export const COMPACTION_KEEP_RECENT = 5;
-export const FALLBACK_MODELS = ['nvidia/nemotron-3.5-lightning:free', 'dots-studio/dots-3-note-preview:free', 'poolside/laguna-s-2.1:free'];
-export const SUBAGENT_MAX_ITERATIONS = 10; 
-export const SUBAGENT_TOOLS = ["read_file", "run_bash"];
+export const FALLBACK_MODELS = [
+  'nvidia/nemotron-3.5-lightning:free',
+  'dots-studio/dots-3-note-preview:free',
+  'poolside/laguna-s-2.1:free',
+];
+export const SUBAGENT_MAX_ITERATIONS = 10;
+export const SUBAGENT_TOOLS = ['read_file', 'run_bash'];
 export function buildSystemPrompt(cwd: string): string {
   return `${SYSTEM_PROMPT}\n\nYou are operating in the directory: ${cwd}\nAll file paths you use should be relative to this directory unless the user specifies an absolute path.`;
 }
-

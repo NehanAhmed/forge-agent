@@ -27,7 +27,7 @@ export const CODING_MODELS: ModelInfo[] = [
   },
 ];
 
-export const DEFAULT_MODEL_ID = CODING_MODELS[0]?.id || "qwen/qwen3.8-27b:free";
+export const DEFAULT_MODEL_ID = CODING_MODELS[0]?.id || 'qwen/qwen3.8-27b:free';
 
 export function getModelById(id: string): ModelInfo | undefined {
   return CODING_MODELS.find(m => m.id === id);

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { cellWidth, fitCells, padCells, sanitizeText, truncateCells, wrapCells } from '../src/ui/text.js';
+import { cellWidth, fitCells, padCells, sanitizeText, truncateCells, wrapCells } from '../../../src/ui/text.js';
 
 describe('UI Text', () => {
   it('measures wide and combining graphemes', () => {

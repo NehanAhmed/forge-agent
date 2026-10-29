@@ -2,12 +2,12 @@ import React from 'react';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { render } from 'ink-testing-library';
-import { Dashboard } from '../src/cli/components/dashboard/Dashboard.js';
-import { createTask, type Task } from '../src/core/task.js';
-import type { TaskEvent, TaskClient } from '../src/core/task-client.js';
-import type { LogEntry } from '../src/core/context.js';
-import type { Approval } from '../src/core/task-manager.js';
-import type { TaskDiff, MergeResult } from '../src/core/worktree.js';
+import { Dashboard } from '../../../src/cli/components/dashboard/Dashboard.js';
+import { createTask, type Task } from '../../../src/core/task.js';
+import type { TaskEvent, TaskClient } from '../../../src/core/task-client.js';
+import type { LogEntry } from '../../../src/core/context.js';
+import type { Approval } from '../../../src/core/task-manager.js';
+import type { TaskDiff, MergeResult } from '../../../src/core/worktree.js';
 
 function task(id: string, goal: string, displayId: string, createdAt: number): Task {
   const created = createTask(id, goal, { displayId });
@@ -67,7 +67,7 @@ class MockClient implements TaskClient {
     this.resolved.push({ approvalId, decision });
   }
   async getDiff(): Promise<TaskDiff> {
-    return { files: [], diff: '', baseRef: 'main' };
+    return { files: [], diff: '', commits: [] };
   }
   async mergeTask(): Promise<MergeResult> {
     return { success: true };

@@ -3,21 +3,33 @@ import type { Task, TaskStatus } from '../core/task.js';
 export function getStatusGlyph(status: TaskStatus, useAscii = false): string {
   if (useAscii) {
     switch (status) {
-      case 'queued': return '...';
-      case 'running': return '>';
-      case 'waiting_approval': return '!';
-      case 'done': return 'v';
-      case 'failed': return 'x';
-      case 'cancelled': return '-';
+      case 'queued':
+        return '...';
+      case 'running':
+        return '>';
+      case 'waiting_approval':
+        return '!';
+      case 'done':
+        return 'v';
+      case 'failed':
+        return 'x';
+      case 'cancelled':
+        return '-';
     }
   }
   switch (status) {
-    case 'queued': return '…';
-    case 'running': return '▶';
-    case 'waiting_approval': return '⚠';
-    case 'done': return '✓';
-    case 'failed': return '✗';
-    case 'cancelled': return '⊘';
+    case 'queued':
+      return '…';
+    case 'running':
+      return '▶';
+    case 'waiting_approval':
+      return '⚠';
+    case 'done':
+      return '✓';
+    case 'failed':
+      return '✗';
+    case 'cancelled':
+      return '⊘';
   }
 }
 

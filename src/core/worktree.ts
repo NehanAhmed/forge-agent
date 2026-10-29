@@ -6,6 +6,16 @@ import os from 'os';
 const GIT_TIMEOUT = 30_000;
 const WORKTREES_DIR = path.join(os.homedir(), '.forge', 'worktrees');
 
+function normalizePath(target: string): string {
+  const resolved = path.resolve(target);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function isManagedWorktreePath(target: string): boolean {
+  const relative = path.relative(normalizePath(WORKTREES_DIR), normalizePath(target));
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
 export interface WorktreeInfo {
   path: string;
   branch: string;
@@ -37,7 +47,7 @@ function runGit(args: string[], cwd: string): string {
   } catch (err: any) {
     const stderr = err.stderr?.toString() ?? '';
     const stdout = err.stdout?.toString() ?? '';
-    throw new Error(`git ${args[0]} failed: ${stderr || stdout || err.message}`);
+    throw new Error(`git ${args[0]} failed: ${stderr || stdout || err.message}`, { cause: err });
   }
 }
 
@@ -95,8 +105,8 @@ export function createWorktree(taskId: string, goal: string, repoCwd: string): W
     // Tree is dirty - this is allowed but worth logging
     console.warn(
       `[worktree] Warning: main working tree has uncommitted changes. ` +
-      `The worktree will branch from HEAD (${baseRef.slice(0, 8)}) ` +
-      `and will NOT include uncommitted changes.`
+        `The worktree will branch from HEAD (${baseRef.slice(0, 8)}) ` +
+        `and will NOT include uncommitted changes.`,
     );
   }
 
@@ -113,7 +123,7 @@ export function createWorktree(taskId: string, goal: string, repoCwd: string): W
 
 export function removeWorktree(info: WorktreeInfo, repoCwd: string, force = false): void {
   // Only operate on worktrees under our managed directory
-  if (!info.path.startsWith(WORKTREES_DIR)) {
+  if (!isManagedWorktreePath(info.path)) {
     throw new Error(`Refusing to remove worktree outside managed directory: ${info.path}`);
   }
 
@@ -146,7 +156,7 @@ export function removeWorktree(info: WorktreeInfo, repoCwd: string, force = fals
 
 export function checkpointCommit(info: WorktreeInfo, message: string): void {
   // Only operate on worktrees under our managed directory
-  if (!info.path.startsWith(WORKTREES_DIR)) {
+  if (!isManagedWorktreePath(info.path)) {
     throw new Error(`Refusing to commit in worktree outside managed directory: ${info.path}`);
   }
 
@@ -192,7 +202,7 @@ export async function getDiff(info: WorktreeInfo): Promise<TaskDiff> {
   }
 
   // Get full diff
-  let diff = '';
+  let diff: string;
   try {
     diff = execFileSync('git', ['diff', `${info.baseRef}..HEAD`], {
       encoding: 'utf-8',
@@ -207,10 +217,11 @@ export async function getDiff(info: WorktreeInfo): Promise<TaskDiff> {
   // Get per-file stats
   const files: Array<{ path: string; additions: number; deletions: number }> = [];
   try {
-    const statsOutput = execFileSync(
-      'git', ['diff', '--numstat', `${info.baseRef}..HEAD`],
-      { encoding: 'utf-8', cwd: info.path, timeout: GIT_TIMEOUT }
-    );
+    const statsOutput = execFileSync('git', ['diff', '--numstat', `${info.baseRef}..HEAD`], {
+      encoding: 'utf-8',
+      cwd: info.path,
+      timeout: GIT_TIMEOUT,
+    });
     for (const line of statsOutput.trim().split('\n').filter(Boolean)) {
       const parts = line.split('\t');
       if (parts.length === 3) {
@@ -228,10 +239,11 @@ export async function getDiff(info: WorktreeInfo): Promise<TaskDiff> {
   // Get commits
   const commits: Array<{ sha: string; message: string }> = [];
   try {
-    const logOutput = execFileSync(
-      'git', ['log', `${info.baseRef}..HEAD`, '--format=%H %s'],
-      { encoding: 'utf-8', cwd: info.path, timeout: GIT_TIMEOUT }
-    );
+    const logOutput = execFileSync('git', ['log', `${info.baseRef}..HEAD`, '--format=%H %s'], {
+      encoding: 'utf-8',
+      cwd: info.path,
+      timeout: GIT_TIMEOUT,
+    });
     for (const line of logOutput.trim().split('\n').filter(Boolean)) {
       const spaceIdx = line.indexOf(' ');
       if (spaceIdx > 0) {
@@ -251,7 +263,7 @@ export async function getDiff(info: WorktreeInfo): Promise<TaskDiff> {
 export async function mergeWorktree(
   info: WorktreeInfo,
   repoCwd: string,
-  opts: { message?: string } = {}
+  opts: { message?: string } = {},
 ): Promise<MergeResult> {
   // Only operate on agent/ branches
   if (!info.branch.startsWith('agent/')) {
@@ -293,14 +305,15 @@ export async function mergeWorktree(
     }
 
     return { success: true };
-  } catch (err: any) {
+  } catch {
     // Merge conflict - abort and report
     const conflictedFiles: string[] = [];
     try {
-      const conflictOutput = execFileSync(
-        'git', ['diff', '--name-only', '--diff-filter=U'],
-        { encoding: 'utf-8', cwd: repoCwd, timeout: GIT_TIMEOUT }
-      );
+      const conflictOutput = execFileSync('git', ['diff', '--name-only', '--diff-filter=U'], {
+        encoding: 'utf-8',
+        cwd: repoCwd,
+        timeout: GIT_TIMEOUT,
+      });
       conflictedFiles.push(...conflictOutput.trim().split('\n').filter(Boolean));
     } catch {
       // Ignore
@@ -340,7 +353,7 @@ export function listOrphanedWorktrees(repoCwd: string, knownTaskIds: Set<string>
         currentPath = line.slice('worktree '.length).trim();
       } else if (line.startsWith('branch ')) {
         const branch = line.slice('branch '.length).trim().replace('refs/heads/', '');
-        if (branch.startsWith('agent/') && currentPath.startsWith(WORKTREES_DIR)) {
+        if (branch.startsWith('agent/') && isManagedWorktreePath(currentPath)) {
           // Check if this worktree belongs to a known task
           const taskId = path.basename(currentPath);
           if (!knownTaskIds.has(taskId)) {

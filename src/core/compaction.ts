@@ -14,6 +14,9 @@ export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
   model: MODEL,
 };
 
+type ModelCall = ReturnType<typeof getClient>['callModel'];
+export type CompactionCallModel = (request: Parameters<ModelCall>[0]) => ReturnType<ModelCall>;
+
 type SDKMessage = {
   role?: string;
   content?: string | unknown[];
@@ -153,7 +156,8 @@ function toToolItem(msg: SDKMessage) {
 
 export async function compactIfNeeded(
   state: ConversationState,
-  config: CompactionConfig = DEFAULT_COMPACTION_CONFIG
+  config: CompactionConfig = DEFAULT_COMPACTION_CONFIG,
+  callModelOverride?: CompactionCallModel,
 ): Promise<ConversationState> {
   const legacyMessages = stateToLegacyMessages(state);
   const estimatedTokens = JSON.stringify(legacyMessages).length / 4;
@@ -172,12 +176,14 @@ export async function compactIfNeeded(
   console.log(`[compaction] compacting ${toSummarize.length} messages...`);
 
   try {
-    const summaryResponse = await getClient().callModel({
+    const callModel = callModelOverride ?? ((request: Parameters<ModelCall>[0]) => getClient().callModel(request));
+    const summaryResponse = await callModel({
       model: config.model,
       input: [
         {
           role: 'system',
-          content: 'Summarize this conversation history concisely. You MUST explicitly state, verbatim or near-verbatim, what the user\'s most recent request/goal was — this is the single most important thing to preserve. Also preserve: file paths touched, key decisions made, and any unresolved sub-tasks. Discard: verbose reasoning, redundant tool output, and repeated file contents already summarized elsewhere.',
+          content:
+            "Summarize this conversation history concisely. You MUST explicitly state, verbatim or near-verbatim, what the user's most recent request/goal was — this is the single most important thing to preserve. Also preserve: file paths touched, key decisions made, and any unresolved sub-tasks. Discard: verbose reasoning, redundant tool output, and repeated file contents already summarized elsewhere.",
         } as any,
         { role: 'user', content: JSON.stringify(toSummarize) } as any,
       ],
@@ -201,7 +207,10 @@ export async function compactIfNeeded(
       toolCallId?: string;
     }> = [
       systemMsg,
-      { role: 'system', content: `[Compacted history — the user's active request is stated below; continue working on it]: ${summary}` },
+      {
+        role: 'system',
+        content: `[Compacted history — the user's active request is stated below; continue working on it]: ${summary}`,
+      },
       ...recent,
     ];
 

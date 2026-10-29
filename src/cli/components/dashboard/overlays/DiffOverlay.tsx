@@ -32,12 +32,18 @@ export function DiffOverlay({ title, lines, top, width, height, theme, loading, 
   return (
     <Box flexDirection="column" width={width} height={height} paddingX={1} aria-label={`Diff: ${title}`}>
       <Box justifyContent="space-between" width={textWidth}>
-        <Text bold color={theme.accent}>{truncateCells(title, Math.max(1, textWidth - 18))}</Text>
-        <Text dimColor>{lines.length > 0 ? `${clampedTop + 1}-${Math.min(lines.length, clampedTop + viewport)}/${lines.length}` : ''}</Text>
+        <Text bold color={theme.accent}>
+          {truncateCells(title, Math.max(1, textWidth - 18))}
+        </Text>
+        <Text dimColor>
+          {lines.length > 0 ? `${clampedTop + 1}-${Math.min(lines.length, clampedTop + viewport)}/${lines.length}` : ''}
+        </Text>
       </Box>
 
       {error ? (
-        <Text color={theme.error} wrap="truncate">{truncateCells(error, textWidth)}</Text>
+        <Text color={theme.error} wrap="truncate">
+          {truncateCells(error, textWidth)}
+        </Text>
       ) : loading ? (
         <Text dimColor>Loading diff…</Text>
       ) : visible.length === 0 ? (

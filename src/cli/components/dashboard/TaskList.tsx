@@ -47,9 +47,7 @@ export function TaskList({
   if (rows.length === 0) {
     return (
       <Box width={width}>
-        <Text dimColor>
-          {filter === 'all' ? 'No tasks yet. Type a goal below.' : `No ${filter} tasks.`}
-        </Text>
+        <Text dimColor>{filter === 'all' ? 'No tasks yet. Type a goal below.' : `No ${filter} tasks.`}</Text>
       </Box>
     );
   }
@@ -66,14 +64,13 @@ export function TaskList({
         const caret = selected ? glyphs.selected : ' ';
         const maxIndentDepth = Math.max(0, Math.min(row.depth, Math.floor((width - 18) / 2)));
         const indent = '  '.repeat(maxIndentDepth);
-        const tree = row.hasChildren
-          ? (row.isCollapsed ? glyphs.collapsed : glyphs.expanded)
-          : glyphs.leaf;
+        const tree = row.hasChildren ? (row.isCollapsed ? glyphs.collapsed : glyphs.expanded) : glyphs.leaf;
         const prefix = `${caret} ${indent}${tree}${task.displayId} ${statusGlyph} `;
         const attentionText = attention ? `${glyphs.approval} ` : '';
 
         const elapsedMs = taskElapsed(task, now);
-        const showElapsed = elapsedMs !== null &&
+        const showElapsed =
+          elapsedMs !== null &&
           (task.status === 'running' || task.status === 'waiting_approval' || task.status === 'queued');
         const metaParts = [
           showElapsed ? formatDuration(elapsedMs) : '',
@@ -94,9 +91,13 @@ export function TaskList({
             aria-state={{ selected }}
             aria-label={`${statusLabel(task.status)} task ${task.displayId}: ${task.goal}${selected ? ', selected' : ''}`}
           >
-            <Text color={selected ? theme.focus : undefined} bold={selected}>{prefix}</Text>
+            <Text color={selected ? theme.focus : undefined} bold={selected}>
+              {prefix}
+            </Text>
             {attentionText !== '' && <Text color={theme.warning}>{attentionText}</Text>}
-            <Text bold={selected} color={selected ? theme.focus : theme.text}>{paddedGoal}</Text>
+            <Text bold={selected} color={selected ? theme.focus : theme.text}>
+              {paddedGoal}
+            </Text>
             {meta !== '' && <Text dimColor>{` ${meta}`}</Text>}
           </Box>
         );

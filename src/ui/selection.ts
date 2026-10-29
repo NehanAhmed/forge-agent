@@ -9,18 +9,17 @@ export type TaskFilter = 'all' | 'active' | 'attention';
 export function filterRows<T extends SelectableRow>(rows: T[], filter: TaskFilter): T[] {
   if (filter === 'all') return rows;
   if (filter === 'active') {
-    return rows.filter(row =>
-      row.task.status === 'queued' ||
-      row.task.status === 'running' ||
-      row.task.status === 'waiting_approval'
+    return rows.filter(
+      row => row.task.status === 'queued' || row.task.status === 'running' || row.task.status === 'waiting_approval',
     );
   }
-  return rows.filter(row =>
-    row.task.status === 'waiting_approval' ||
-    row.task.status === 'failed' ||
-    row.task.reviewState === 'pending_review' ||
-    row.task.reviewState === 'conflict' ||
-    row.task.reviewState === 'needs_attention'
+  return rows.filter(
+    row =>
+      row.task.status === 'waiting_approval' ||
+      row.task.status === 'failed' ||
+      row.task.reviewState === 'pending_review' ||
+      row.task.reviewState === 'conflict' ||
+      row.task.reviewState === 'needs_attention',
   );
 }
 
@@ -30,7 +29,11 @@ export function rowIndex(rows: SelectableRow[], id: string | null): number {
 }
 
 /** Move selection by `delta`, clamped to the available rows. */
-export function moveSelection<T extends SelectableRow>(rows: T[], currentId: string | null, delta: number): string | null {
+export function moveSelection<T extends SelectableRow>(
+  rows: T[],
+  currentId: string | null,
+  delta: number,
+): string | null {
   if (rows.length === 0) return null;
   const current = rowIndex(rows, currentId);
   if (current === -1) {
@@ -82,11 +85,7 @@ export function clampScroll(offset: number, total: number, height: number): numb
  * When a selected row disappears because an ancestor collapsed, fall back to
  * the nearest visible ancestor. Returns `selectedId` when it is still visible.
  */
-export function nearestVisible(
-  rows: SelectableRow[],
-  tasks: Task[],
-  selectedId: string | null,
-): string | null {
+export function nearestVisible(rows: SelectableRow[], tasks: Task[], selectedId: string | null): string | null {
   if (!selectedId) return rows[0]?.task.id ?? null;
   if (rowIndex(rows, selectedId) !== -1) return selectedId;
 

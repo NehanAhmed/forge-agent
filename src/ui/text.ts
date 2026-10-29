@@ -2,8 +2,7 @@ import stringWidth from 'string-width';
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
-const ANSI_PATTERN =
-  /\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001B\\))/g;
+const ANSI_PATTERN = /\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001B\\))/g;
 
 const CONTROL_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 

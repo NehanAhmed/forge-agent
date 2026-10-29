@@ -2,7 +2,7 @@ import type { Task, TaskStatus, TaskUsage, ReviewState } from './task.js';
 import type { LogEntry, ApprovalPolicy } from './context.js';
 import type { Approval } from './task-manager.js';
 import type { TaskDiff, MergeResult } from './worktree.js';
-import { TaskManager } from './task-manager.js';
+import type { TaskManager } from './task-manager.js';
 
 export interface TaskEventMap {
   'task:created': { taskId: string; task: Task };
@@ -19,7 +19,10 @@ export type TaskEvent = {
 }[keyof TaskEventMap];
 
 export interface TaskClient {
-  createTask(goal: string, opts?: { readOnly?: boolean; isolation?: 'worktree' | 'shared'; policy?: ApprovalPolicy }): Promise<Task>;
+  createTask(
+    goal: string,
+    opts?: { readOnly?: boolean; isolation?: 'worktree' | 'shared'; policy?: ApprovalPolicy },
+  ): Promise<Task>;
   listTasks(): Promise<Task[]>;
   getTask(id: string): Promise<Task | undefined>;
   getLog(id: string, opts?: { fromSeq?: number; limit?: number }): Promise<LogEntry[]>;
@@ -41,13 +44,13 @@ export class InProcessTaskClient implements TaskClient {
     this.manager = manager;
 
     // Bridge TaskManager events to TaskClient subscribers
-    this.manager.on('task:created', (data) => this.emit('task:created', data));
-    this.manager.on('task:status', (data) => this.emit('task:status', data));
-    this.manager.on('task:log', (data) => this.emit('task:log', data));
-    this.manager.on('task:usage', (data) => this.emit('task:usage', data));
-    this.manager.on('approval:requested', (data) => this.emit('approval:requested', data));
-    this.manager.on('approval:resolved', (data) => this.emit('approval:resolved', data));
-    this.manager.on('task:review', (data) => this.emit('task:review', data));
+    this.manager.on('task:created', data => this.emit('task:created', data));
+    this.manager.on('task:status', data => this.emit('task:status', data));
+    this.manager.on('task:log', data => this.emit('task:log', data));
+    this.manager.on('task:usage', data => this.emit('task:usage', data));
+    this.manager.on('approval:requested', data => this.emit('approval:requested', data));
+    this.manager.on('approval:resolved', data => this.emit('approval:resolved', data));
+    this.manager.on('task:review', data => this.emit('task:review', data));
   }
 
   private emit<K extends keyof TaskEventMap>(type: K, data: TaskEventMap[K]): void {
@@ -57,7 +60,10 @@ export class InProcessTaskClient implements TaskClient {
     }
   }
 
-  async createTask(goal: string, opts?: { readOnly?: boolean; isolation?: 'worktree' | 'shared'; policy?: ApprovalPolicy }): Promise<Task> {
+  async createTask(
+    goal: string,
+    opts?: { readOnly?: boolean; isolation?: 'worktree' | 'shared'; policy?: ApprovalPolicy },
+  ): Promise<Task> {
     return this.manager.create(goal, opts);
   }
 

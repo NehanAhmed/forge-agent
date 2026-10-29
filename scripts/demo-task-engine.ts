@@ -69,14 +69,16 @@ async function runDemo() {
 
   // Subscribe to live events
   manager.on('task:created', ({ taskId, task }: any) => {
-    console.log(`\n[EVENT] task:created -> ID: ${taskId.slice(0, 16)}... | Goal: "${task.goal}" | Policy: ${task.policy} | Isolation: ${task.isolation}`);
+    console.log(
+      `\n[EVENT] task:created -> ID: ${taskId.slice(0, 16)}... | Goal: "${task.goal}" | Policy: ${task.policy} | Isolation: ${task.isolation}`,
+    );
   });
 
   manager.on('task:status', ({ taskId, oldStatus, newStatus }: any) => {
     console.log(`[EVENT] task:status  -> ID: ${taskId.slice(0, 16)}... | ${oldStatus ?? 'new'} -> ${newStatus}`);
   });
 
-  manager.on('task:log', ({ taskId, entry }: any) => {
+  manager.on('task:log', ({ entry }: any) => {
     console.log(`  [LOG] [${entry.type.toUpperCase()}] ${entry.content}`);
   });
 
@@ -85,7 +87,9 @@ async function runDemo() {
   });
 
   manager.on('approval:requested', ({ approvalId, taskId, approval }: any) => {
-    console.log(`[EVENT] approval:req -> ID: ${approvalId} for task ${taskId.slice(0, 16)}... | Tool: ${approval.tool}`);
+    console.log(
+      `[EVENT] approval:req -> ID: ${approvalId} for task ${taskId.slice(0, 16)}... | Tool: ${approval.tool}`,
+    );
     // Auto-approve after a brief pause
     setTimeout(() => {
       console.log(`[DEMO] Auto-approving request ${approvalId}...`);
@@ -112,7 +116,7 @@ async function runDemo() {
   const demoTaskIds = [task1.id, task2.id, task3.id];
 
   // Wait for our 3 demo tasks to settle
-  await new Promise<void>((resolve) => {
+  await new Promise<void>(resolve => {
     const interval = setInterval(() => {
       const pending = demoTaskIds
         .map(id => manager.get(id))
@@ -128,15 +132,17 @@ async function runDemo() {
   console.log(' Final Tasks Summary Table');
   console.log('='.repeat(60));
   console.table(
-    demoTaskIds.map(id => manager.get(id)!).map(t => ({
-      ID: t.id.slice(0, 16) + '...',
-      Goal: t.goal.slice(0, 30),
-      Status: t.status,
-      Isolation: t.isolation,
-      Policy: t.policy,
-      Review: t.reviewState,
-      Tokens: t.usage.inputTokens + t.usage.outputTokens,
-    }))
+    demoTaskIds
+      .map(id => manager.get(id)!)
+      .map(t => ({
+        ID: t.id.slice(0, 16) + '...',
+        Goal: t.goal.slice(0, 30),
+        Status: t.status,
+        Isolation: t.isolation,
+        Policy: t.policy,
+        Review: t.reviewState,
+        Tokens: t.usage.inputTokens + t.usage.outputTokens,
+      })),
   );
 
   console.log('\n--- Reviewing & Merging Task 2 Changes ---');

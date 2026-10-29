@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import { stepCountIs, type ConversationState, createInitialState } from '@openrouter/agent';
+import { stepCountIs, type ConversationState } from '@openrouter/agent';
 import { createTools } from '../tools/definitions.js';
 import { getClient } from '../core/client.js';
-import { buildSystemPrompt, MAX_ITERATIONS, MODEL, SYSTEM_PROMPT } from '../core/constants.js';
+import { buildSystemPrompt, MAX_ITERATIONS } from '../core/constants.js';
 import { createStateAccessor, saveSessionTitle } from '../core/state.js';
 import { deriveSessionTitle } from '../tools/helpers.js';
 import { DEFAULT_MODEL_ID } from '../core/models.js';
@@ -19,20 +19,15 @@ export type LogEvent =
 export type Callbacks = {
   onLog: (event: LogEvent) => void;
   onConfirm: (description: string) => Promise<boolean>;
-  onUsage: (inputTokens: number, outputTokens: number, cost: number | undefined
-  ) => void;
+  onUsage: (inputTokens: number, outputTokens: number, cost: number | undefined) => void;
 };
-
-function generateId(): string {
-  return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-}
 
 export async function runAgent(
   sessionId: string,
   userMessage: string,
   callbacks: Callbacks,
   ctx: AgentContext,
-  modelId: string = DEFAULT_MODEL_ID
+  modelId: string = DEFAULT_MODEL_ID,
 ): Promise<ConversationState> {
   const tools = createTools(ctx);
   const stateAccessor = createStateAccessor(sessionId);

@@ -1,4 +1,5 @@
 import fs from 'fs';
+import path from 'path';
 import { execFileSync, execSync } from 'child_process';
 import { createTools } from './definitions.js';
 import { MODEL, SUBAGENT_MAX_ITERATIONS, SUBAGENT_TOOLS, SYSTEM_PROMPT } from '../core/constants.js';
@@ -55,7 +56,9 @@ export function gitDiff(ctx: AgentContext, staged: boolean = false, paths: strin
   let output = runGit(args, ctx.cwd);
   if (output.startsWith('ERROR:')) return output;
   if (output.length > DIFF_TRUNCATE_LIMIT) {
-    output = output.slice(0, DIFF_TRUNCATE_LIMIT) + `\n\n[Output truncated at ${DIFF_TRUNCATE_LIMIT} characters — narrow your paths or use staged diff for smaller output.]`;
+    output =
+      output.slice(0, DIFF_TRUNCATE_LIMIT) +
+      `\n\n[Output truncated at ${DIFF_TRUNCATE_LIMIT} characters — narrow your paths or use staged diff for smaller output.]`;
   }
   return output;
 }
@@ -144,11 +147,12 @@ export function readFile(ctx: AgentContext, path: string): string {
   }
 }
 
-export function writeFile(ctx: AgentContext, path: string, content: string): string {
+export function writeFile(ctx: AgentContext, filePath: string, content: string): string {
   try {
-    const safePath = resolveSafePath(path, ctx.cwd);
+    const safePath = resolveSafePath(filePath, ctx.cwd);
+    fs.mkdirSync(path.dirname(safePath), { recursive: true });
     fs.writeFileSync(safePath, content, 'utf-8');
-    return `File written successfully to ${path}`;
+    return `File written successfully to ${filePath}`;
   } catch (err: any) {
     return `ERROR: ${err.message}`;
   }
@@ -177,8 +181,7 @@ export async function spawnSubAgent(ctx: AgentContext, task: string): Promise<st
     policy: 'read_only',
     taskId: undefined, // Sub-agents are ephemeral
   };
-  const readOnlyTools = createTools(subCtx)
-    .filter(t => SUBAGENT_TOOLS.includes(t.function.name));
+  const readOnlyTools = createTools(subCtx).filter(t => SUBAGENT_TOOLS.includes(t.function.name));
   let result;
   try {
     result = getClient().callModel({
@@ -198,7 +201,12 @@ export async function spawnSubAgent(ctx: AgentContext, task: string): Promise<st
   }
 }
 
-export function searchCodebase(ctx: AgentContext, pattern: string, path: string = '.', maxResults: number = 60): string {
+export function searchCodebase(
+  ctx: AgentContext,
+  pattern: string,
+  path: string = '.',
+  maxResults: number = 60,
+): string {
   const inputPath = path && path.trim() ? path : '.';
   const cappedMax = Math.min(maxResults, 150);
   let resolvedPath: string;
@@ -211,15 +219,27 @@ export function searchCodebase(ctx: AgentContext, pattern: string, path: string 
     const output = execFileSync(
       'rg',
       [
-        '--json', '-n', '-C', '2', '--max-count', String(cappedMax),
-        '--glob', '!node_modules',
-        '--glob', '!dist',
-        '--glob', '!.git',
-        '--glob', '!*.lock',
-        '--glob', '!package-lock.json',
-        '--', pattern, resolvedPath,
+        '--json',
+        '-n',
+        '-C',
+        '2',
+        '--max-count',
+        String(cappedMax),
+        '--glob',
+        '!node_modules',
+        '--glob',
+        '!dist',
+        '--glob',
+        '!.git',
+        '--glob',
+        '!*.lock',
+        '--glob',
+        '!package-lock.json',
+        '--',
+        pattern,
+        resolvedPath,
       ],
-      { encoding: 'utf-8', timeout: 10_000, maxBuffer: 10 * 1024 * 1024 }
+      { encoding: 'utf-8', timeout: 10_000, maxBuffer: 10 * 1024 * 1024 },
     );
     return formatRgOutput(output, cappedMax);
   } catch (err: any) {
@@ -228,7 +248,10 @@ export function searchCodebase(ctx: AgentContext, pattern: string, path: string 
   }
 }
 
-export function todoWrite(sessionId: string, todos: Array<{ id: string; content: string; status: 'pending' | 'in_progress' | 'completed' }>): string {
+export function todoWrite(
+  sessionId: string,
+  todos: Array<{ id: string; content: string; status: 'pending' | 'in_progress' | 'completed' }>,
+): string {
   try {
     const saved = saveTodos(sessionId, todos as TodoItem[]);
     const counts = getTodoCounts(saved.items);

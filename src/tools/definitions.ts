@@ -1,7 +1,18 @@
 // tools.ts — Agent SDK style
 import { tool } from '@openrouter/agent';
 import { z } from 'zod';
-import { runBash, readFile, writeFile, editFile, spawnSubAgent, searchCodebase, gitStatus, gitDiff, gitAdd, gitCommit } from './implementations.js';
+import {
+  runBash,
+  readFile,
+  writeFile,
+  editFile,
+  spawnSubAgent,
+  searchCodebase,
+  gitStatus,
+  gitDiff,
+  gitAdd,
+  gitCommit,
+} from './implementations.js';
 import type { AgentContext } from '../core/context.js';
 import { executeWithPolicy } from '../core/approvals.js';
 
@@ -95,7 +106,9 @@ function createReplaceStringTool(ctx: AgentContext) {
       'Make a precise, surgical edit to an existing file by replacing one exact occurrence of a string with a new string. This is the preferred way to modify part of a file — it leaves the rest of the file untouched. stringToReplace must match EXACTLY ONE location in the file, character-for-character (including whitespace/indentation).',
     inputSchema: z.object({
       path: z.string().describe('Relative or absolute path to the file to edit.'),
-      stringToReplace: z.string().describe('The exact existing text to find and replace. Must match exactly one location in the file.'),
+      stringToReplace: z
+        .string()
+        .describe('The exact existing text to find and replace. Must match exactly one location in the file.'),
       newString: z.string().describe('The text to replace it with.'),
     }),
     execute: async ({ path, stringToReplace, newString }) => {
@@ -110,9 +123,11 @@ function createSpawnSubAgentTool(ctx: AgentContext) {
   return tool({
     name: 'spawn_sub_agent',
     description:
-      "Delegate a self-contained investigative task to a sub-agent with a fresh, isolated context. Use this for tasks that would pollute your context with a lot of intermediate noise. The sub-agent has read-only tools and returns a single summarized answer. Do not use this for tasks that require writing/editing files.",
+      'Delegate a self-contained investigative task to a sub-agent with a fresh, isolated context. Use this for tasks that would pollute your context with a lot of intermediate noise. The sub-agent has read-only tools and returns a single summarized answer. Do not use this for tasks that require writing/editing files.',
     inputSchema: z.object({
-      task: z.string().describe('A clear, self-contained description of what the sub-agent should find/do and report back.'),
+      task: z
+        .string()
+        .describe('A clear, self-contained description of what the sub-agent should find/do and report back.'),
     }),
     execute: async ({ task }) => ({ result: await spawnSubAgent(ctx, task) }),
   });
@@ -163,7 +178,10 @@ function createGitAddTool(ctx: AgentContext) {
     description:
       'Stage files for commit. Provide a list of file or directory paths to stage. Each path is validated to be inside the repository.',
     inputSchema: z.object({
-      paths: z.array(z.string()).min(1).describe('File or directory paths to stage. Use ["."] to stage all changes explicitly.'),
+      paths: z
+        .array(z.string())
+        .min(1)
+        .describe('File or directory paths to stage. Use ["."] to stage all changes explicitly.'),
     }),
     execute: async ({ paths }) => {
       return executeWithPolicy(ctx, 'write', 'git_add', { paths }, () => ({
@@ -196,7 +214,10 @@ function createSpawnTaskTool(ctx: AgentContext) {
       'Spawn a child task that runs in parallel/background to accomplish a well-defined sub-goal. Child tasks share your budget and worktree. Write-capable children run one at a time to prevent file corruption. Returns immediately with the child task ID.',
     inputSchema: z.object({
       goal: z.string().describe('Clear, self-contained goal for the child task.'),
-      readOnly: z.boolean().optional().describe('Set to true if the child task should be restricted to read-only tools.'),
+      readOnly: z
+        .boolean()
+        .optional()
+        .describe('Set to true if the child task should be restricted to read-only tools.'),
     }),
     execute: async ({ goal, readOnly }) => {
       if (!ctx.spawnChild) throw new Error('spawn_task unavailable in this context');
@@ -225,8 +246,7 @@ function createWaitForTasksTool(ctx: AgentContext) {
 function createGetTaskTool(ctx: AgentContext) {
   return tool({
     name: 'get_task',
-    description:
-      'Check the status, usage, and summary of one of your child tasks without blocking.',
+    description: 'Check the status, usage, and summary of one of your child tasks without blocking.',
     inputSchema: z.object({
       id: z.string().describe('Child task ID to query.'),
     }),

@@ -52,11 +52,21 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Test
-        run: pnpm test
+      - name: Lint
+        run: pnpm lint
 
+      - name: Check formatting
+        run: pnpm format:check
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Build first so the CLI smoke test can execute dist/cli/app.js.
       - name: Build
         run: pnpm build
+
+      - name: Test with coverage
+        run: pnpm test:coverage
 
       - name: Audit production dependencies
         run: pnpm audit --prod --audit-level high

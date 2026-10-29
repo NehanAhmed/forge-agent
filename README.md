@@ -133,17 +133,26 @@ outside the project. Deleting a task's worktree from the dashboard also removes 
 
 ```sh
 pnpm install
-pnpm build      # clean + tsc + shebang; also the typecheck
+pnpm lint       # ESLint (TypeScript + React hooks)
+pnpm format     # Prettier; use format:check in CI
+pnpm typecheck  # src, tests, and scripts
+pnpm build      # clean + tsc + shebang
 pnpm test       # node:test via tsx, no API key needed
+pnpm test:coverage
 npm link        # use the local build as `forge`
 ```
 
+`pnpm test` runs both `tests/unit` and `tests/integration`. The integration suite builds
+real git repositories and worktrees in an isolated temporary `HOME`, so run it from the
+repository root. Build once before running the CLI smoke tests locally.
+
 `pnpm dev` watches `src/cli/app.tsx` and needs `dist/cli/app.js` to exist, so run `pnpm
-build` once first. Run tests from the repository root.
+build` once first.
 
 Contributor workflow, package rules, and the release process are in
 [AGENTS.md](AGENTS.md). For a tour of the code, start with
-[docs/architecture.md](docs/architecture.md).
+[docs/architecture.md](docs/architecture.md); test conventions are in
+[docs/testing.md](docs/testing.md).
 
 ## License
 

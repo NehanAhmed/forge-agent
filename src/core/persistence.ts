@@ -118,12 +118,14 @@ export function appendTaskLog(taskId: string, entry: LogEntry, tasksDir?: string
   const line = JSON.stringify(entry) + '\n';
   try {
     fs.appendFileSync(logPath, line, 'utf-8');
-  } catch {}
+  } catch {
+    // Logging must never fail a task; the caller has no recovery path.
+  }
 }
 
 export function loadTaskLog(
   taskId: string,
-  opts: { fromSeq?: number; limit?: number; tasksDir?: string } = {}
+  opts: { fromSeq?: number; limit?: number; tasksDir?: string } = {},
 ): LogEntry[] {
   const dir = opts.tasksDir ?? DEFAULT_TASKS_DIR;
   const logPath = getTaskLogPath(taskId, dir);
@@ -138,13 +140,17 @@ export function loadTaskLog(
         if (opts.fromSeq === undefined || entry.seq >= opts.fromSeq) {
           entries.push(entry);
         }
-      } catch { continue; }
+      } catch {
+        continue;
+      }
     }
     if (opts.limit && entries.length > opts.limit) {
       entries = entries.slice(-opts.limit);
     }
     return entries;
-  } catch { return []; }
+  } catch {
+    return [];
+  }
 }
 
 export function ensureTaskDir(taskId: string, tasksDir?: string): string {

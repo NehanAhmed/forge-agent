@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveAction, type KeyLike } from '../src/ui/keymap.js';
+import { resolveAction, type KeyLike } from '../../../src/ui/keymap.js';
 
 function key(overrides: Partial<KeyLike> = {}): KeyLike {
   return {
@@ -32,14 +32,14 @@ describe('UI Keymap', () => {
   });
 
   it('moves selection with arrows from the input and list', () => {
-    assert.deepEqual(
-      resolveAction('', key({ upArrow: true }), { focus: 'input', overlay: null }),
-      { type: 'moveSelection', delta: -1 },
-    );
-    assert.deepEqual(
-      resolveAction('', key({ downArrow: true }), { focus: 'list', overlay: null }),
-      { type: 'moveSelection', delta: 1 },
-    );
+    assert.deepEqual(resolveAction('', key({ upArrow: true }), { focus: 'input', overlay: null }), {
+      type: 'moveSelection',
+      delta: -1,
+    });
+    assert.deepEqual(resolveAction('', key({ downArrow: true }), { focus: 'list', overlay: null }), {
+      type: 'moveSelection',
+      delta: 1,
+    });
   });
 
   it('routes list actions only when the list is focused', () => {
@@ -50,14 +50,14 @@ describe('UI Keymap', () => {
   });
 
   it('scrolls the log when the detail owns focus', () => {
-    assert.deepEqual(
-      resolveAction('', key({ downArrow: true }), { focus: 'detail', overlay: null }),
-      { type: 'scroll', delta: 1 },
-    );
-    assert.deepEqual(
-      resolveAction('g', key(), { focus: 'detail', overlay: null }),
-      { type: 'scrollEdge', edge: 'first' },
-    );
+    assert.deepEqual(resolveAction('', key({ downArrow: true }), { focus: 'detail', overlay: null }), {
+      type: 'scroll',
+      delta: 1,
+    });
+    assert.deepEqual(resolveAction('g', key(), { focus: 'detail', overlay: null }), {
+      type: 'scrollEdge',
+      edge: 'first',
+    });
   });
 
   it('cycles focus and blurs predictably', () => {

@@ -18,18 +18,22 @@ export function TooSmall({ columns, rows, theme, help = false, ascii = false }: 
   if (help) {
     return (
       <Box flexDirection="column" paddingX={1} paddingY={1}>
-        <Text bold color={theme.accent}>keys</Text>
-        <Text wrap="truncate">{truncateCells(`? / q close${ascii ? ' | ' : ' · '}resize to at least 50x10`, width)}</Text>
+        <Text bold color={theme.accent}>
+          keys
+        </Text>
+        <Text wrap="truncate">
+          {truncateCells(`? / q close${ascii ? ' | ' : ' · '}resize to at least 50x10`, width)}
+        </Text>
       </Box>
     );
   }
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1}>
-      <Text bold color={theme.accent}>forge</Text>
-      <Text wrap="truncate">
-        {truncateCells(`Terminal too small (${size}). Need at least 50x10.`, width)}
+      <Text bold color={theme.accent}>
+        forge
       </Text>
+      <Text wrap="truncate">{truncateCells(`Terminal too small (${size}). Need at least 50x10.`, width)}</Text>
       <Text dimColor wrap="truncate">
         {truncateCells('Resize the terminal, or press q to quit.', width)}
       </Text>

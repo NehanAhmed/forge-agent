@@ -1,5 +1,5 @@
-import path from "path";
-import fs from "fs";
+import path from 'path';
+import fs from 'fs';
 
 type RgEvent = {
   type: 'begin' | 'match' | 'context' | 'end' | 'summary';
@@ -55,7 +55,12 @@ export const formatRgOutput = (output: string, maxTotalMatches = 60): string => 
   let truncated = false;
 
   for (const line of lines) {
-    const event: RgEvent = JSON.parse(line);
+    let event: RgEvent;
+    try {
+      event = JSON.parse(line) as RgEvent;
+    } catch {
+      continue;
+    }
     if (event.type !== 'match' && event.type !== 'context') continue;
 
     if (event.type === 'match') {
@@ -88,7 +93,9 @@ export const formatRgOutput = (output: string, maxTotalMatches = 60): string => 
   }
 
   if (truncated) {
-    outputs.push(`\n[Results truncated at ${maxTotalMatches} matches — refine your search pattern (e.g. narrow the path or use a more specific pattern) for complete results.]`);
+    outputs.push(
+      `\n[Results truncated at ${maxTotalMatches} matches — refine your search pattern (e.g. narrow the path or use a more specific pattern) for complete results.]`,
+    );
   }
 
   return outputs.join('\n').trim();

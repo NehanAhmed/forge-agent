@@ -45,7 +45,9 @@ export function HelpOverlay({ width, height, theme, ascii = false }: HelpOverlay
 
   return (
     <Box flexDirection="column" width={width} height={height} paddingX={1} aria-label="Dashboard help">
-      <Text bold color={theme.accent}>Keyboard</Text>
+      <Text bold color={theme.accent}>
+        Keyboard
+      </Text>
       {rows.map(([key, description]) => (
         <Box key={key} width={Math.max(1, width - 2)}>
           <Text color={theme.focus}>{fitCells(key, keyWidth)}</Text>

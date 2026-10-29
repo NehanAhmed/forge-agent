@@ -10,17 +10,23 @@ dashboard (default) and a legacy chat (`forge chat`). Built on Ink (React 19) an
 |---|---|
 | `pnpm install --frozen-lockfile` | Install (pnpm only; pinned `pnpm@12.6.0`) |
 | `pnpm build` | `clean` → `tsc` → `scripts/add-shebang.js`; output in `dist/` |
-| `pnpm test` | Full suite via `node:test` + tsx (~30s, no API key needed) |
-| `pnpm exec tsx --test tests/git-tools.test.ts` | Run one test file (repeat the flag per file) |
+| `pnpm test` | Full unit + integration suite via `node:test` + tsx (no API key needed) |
+| `pnpm test:unit` / `pnpm test:integration` | Run only `tests/unit/**` or `tests/integration/**` |
+| `pnpm test:coverage` | Full suite with 85/75/75 line/branch/function gates |
+| `pnpm test:unit --filter "budget"` | Run matching unit tests with the isolated runner |
+| `pnpm lint` / `pnpm format:check` / `pnpm typecheck` | ESLint, Prettier, and src+tests+scripts typecheck |
 | `node scripts/verify-package.js` | Publish-shape checks; **requires a fresh `pnpm build`** |
 | `npm pack --dry-run --json` | Inspect the exact published file set |
 | `pnpm dev` | Watches `src/cli/app.tsx`; **fails if `dist/cli/app.js` does not exist**, so build once first |
 | `pnpm exec tsx scripts/demo-task-engine.ts` | Task-engine demo (not wired to a script) |
 
-- There is **no lint, formatter, or standalone typecheck script**. `pnpm build` is the
-  only typecheck, and `tsconfig.json` only includes `src/**/*` — tests and `scripts/`
-  are never typechecked.
-- Verify changes with `pnpm build && pnpm test` before claiming completion.
+- `tsconfig.json` covers `src/**/*`; `tsconfig.test.json` covers `tests/**/*` and
+  `scripts/**/*.ts`. `pnpm typecheck` runs both.
+- Tests are isolated by `scripts/run-tests.mjs`, which points `HOME`/`USERPROFILE` at a
+  temp directory. Never read the developer's real `~/.forge` or `.env` from a test.
+- Verify changes with `pnpm lint && pnpm format:check && pnpm typecheck && pnpm build &&
+  pnpm test` before claiming completion. Run `pnpm test:coverage` for coverage-sensitive
+  changes.
 - Running the CLI: `forge`, `forge chat`, `forge chat --resume [ID]`,
   `forge config set-key <key>`. After editing, rebuild or `forge` runs stale code.
   For local use: `pnpm build && npm link`.
@@ -34,8 +40,11 @@ git switch main
 git pull --ff-only origin main
 git switch -c feat/my-change
 # edit; if dependencies changed, run pnpm install
-pnpm test
+pnpm lint
+pnpm format:check
+pnpm typecheck
 pnpm build
+pnpm test
 node scripts/verify-package.js
 pnpm audit --prod --audit-level high
 npm pack --dry-run
@@ -176,15 +185,16 @@ npm `gitHead` must all agree. Code merged after a tag waits for the next release
 - Default model comes from `DEFAULT_MODEL_ID` (`core/models.ts`, used by the UI picker
   and headless runs) while `MODEL` (`core/constants.ts`) is used for compaction and the
   sub-agent. Changing "the model" in one place leaves the other stale.
-- `core/state.ts` creates `~/.forge/meta` at **import time**. Keep imports side-effect
-  free elsewhere, and don't let tests or demos touch real task/session data.
+- Keep module imports side-effect free. `core/state.ts` creates `~/.forge/meta` lazily on
+  the first write, and `core/todos.ts` creates the sessions directory before saving.
+  Don't let tests or demos touch real task/session data.
 - Storage: interactive sessions in `.agent-sessions/` under the cwd; session meta in
   `~/.forge/meta/meta.json`; task state in `~/.forge/tasks/`; worktrees in
   `~/.forge/worktrees/`; config + API key in `~/.forge/config.json`. Never commit any
   of these (`.env`, `.forge/`, `.agent-sessions/` are gitignored).
 - `dist/` is generated and gitignored — never edit it directly.
-- `tests/git-tools.test.ts` creates and deletes `tests/temp-git-repo/`; leftovers are
-  gitignored and safe to delete. Tests must be run from the repo root.
+- Git tests create per-test repositories under a temporary `HOME`/`TMP`; the runner
+  removes them afterwards. Tests must be run from the repo root.
 
 ## Agent working rules
 

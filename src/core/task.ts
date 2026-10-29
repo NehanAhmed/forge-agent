@@ -53,7 +53,7 @@ const ALLOWED_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   running: ['waiting_approval', 'done', 'failed', 'cancelled'],
   waiting_approval: ['running', 'cancelled'],
   done: [],
-  failed: [],  // Can transition to 'queued' via resume
+  failed: [], // Can transition to 'queued' via resume
   cancelled: [],
 };
 
@@ -65,7 +65,7 @@ export function validateStatusTransition(from: TaskStatus, to: TaskStatus): void
   if (!isValidTransition(from, to)) {
     throw new Error(
       `Invalid task status transition from '${from}' to '${to}'. ` +
-      `Allowed transitions from '${from}': [${ALLOWED_TRANSITIONS[from]?.join(', ') ?? 'none'}]`
+        `Allowed transitions from '${from}': [${ALLOWED_TRANSITIONS[from]?.join(', ') ?? 'none'}]`,
     );
   }
 }
@@ -82,7 +82,7 @@ export function createTask(
     depth?: number;
     treeId?: string;
     displayId?: string;
-  } = {}
+  } = {},
 ): Task {
   return {
     id,

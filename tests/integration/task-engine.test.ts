@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
 import path from 'path';
@@ -6,29 +6,15 @@ import os from 'os';
 import { execFileSync } from 'child_process';
 
 // Modules under test
-import { resolveSafePath } from '../src/tools/helpers.js';
-import { createBudget, BudgetImpl } from '../src/core/budget.js';
-import {
-  createTask,
-  isValidTransition,
-  validateStatusTransition,
-  type TaskStatus,
-} from '../src/core/task.js';
-import { TaskManager } from '../src/core/task-manager.js';
-import {
-  saveTaskIndex,
-  loadTaskIndex,
-  appendTaskLog,
-  loadTaskLog,
-} from '../src/core/persistence.js';
-import {
-  isAllowlistedCommand,
-  isPathInside,
-  executeWithPolicy,
-} from '../src/core/approvals.js';
-import { createTools } from '../src/tools/definitions.js';
-import { runAgentHeadless } from '../src/core/headless.js';
-import type { AgentContext, LogEntry, ApprovalRequest } from '../src/core/context.js';
+import { resolveSafePath } from '../../src/tools/helpers.js';
+import { createBudget } from '../../src/core/budget.js';
+import { createTask, isValidTransition, validateStatusTransition } from '../../src/core/task.js';
+import { TaskManager } from '../../src/core/task-manager.js';
+import { saveTaskIndex, loadTaskIndex, appendTaskLog, loadTaskLog } from '../../src/core/persistence.js';
+import { isAllowlistedCommand, executeWithPolicy } from '../../src/core/approvals.js';
+import { createTools } from '../../src/tools/definitions.js';
+import { runAgentHeadless } from '../../src/core/headless.js';
+import type { AgentContext, LogEntry } from '../../src/core/context.js';
 import {
   createWorktree,
   removeWorktree,
@@ -36,7 +22,7 @@ import {
   hasChangesFromBase,
   getDiff,
   mergeWorktree,
-} from '../src/core/worktree.js';
+} from '../../src/core/worktree.js';
 
 // --- Test Helpers ---
 
@@ -55,7 +41,10 @@ function initTempGitRepo(): string {
   return dir;
 }
 
-function createFakeModelCall(cannedText = 'Task completed successfully', cannedUsage = { inputTokens: 50, outputTokens: 25, cost: 0.001 }) {
+function createFakeModelCall(
+  cannedText = 'Task completed successfully',
+  cannedUsage = { inputTokens: 50, outputTokens: 25, cost: 0.001 },
+) {
   return () => ({
     async *getTextStream() {
       yield cannedText;
@@ -106,19 +95,13 @@ function createMockContext(overrides: Partial<AgentContext> = {}): AgentContext 
 describe('Phase 1: Context Isolation & Path Safety', () => {
   it('rejects path traversal attempts (..)', () => {
     const cwd = createTempDir();
-    assert.throws(
-      () => resolveSafePath('../outside.txt', cwd),
-      /resolves outside the working directory/
-    );
+    assert.throws(() => resolveSafePath('../outside.txt', cwd), /resolves outside the working directory/);
   });
 
   it('rejects absolute paths outside cwd', () => {
     const cwd = createTempDir();
     const outside = path.resolve(os.tmpdir(), 'definitely-outside.txt');
-    assert.throws(
-      () => resolveSafePath(outside, cwd),
-      /resolves outside the working directory/
-    );
+    assert.throws(() => resolveSafePath(outside, cwd), /resolves outside the working directory/);
   });
 
   it('allows valid relative and subfolder paths inside cwd', () => {
@@ -152,7 +135,7 @@ describe('Phase 2: Headless runAgent & Abort Handling', () => {
   it('completes headless run and produces summary and usage', async () => {
     const logs: any[] = [];
     const ctx = createMockContext({
-      log: (entry) => logs.push(entry),
+      log: entry => logs.push(entry),
       callModel: createFakeModelCall('Finished the job', { inputTokens: 100, outputTokens: 50, cost: 0.002 }) as any,
     });
 
@@ -210,25 +193,21 @@ describe('Phase 3: Task Model & State Machine', () => {
   });
 
   it('rejects disallowed state transitions by throwing', () => {
-    assert.throws(
-      () => validateStatusTransition('done', 'running'),
-      /Invalid task status transition/
-    );
-    assert.throws(
-      () => validateStatusTransition('cancelled', 'running'),
-      /Invalid task status transition/
-    );
-    assert.throws(
-      () => validateStatusTransition('queued', 'done'),
-      /Invalid task status transition/
-    );
+    assert.throws(() => validateStatusTransition('done', 'running'), /Invalid task status transition/);
+    assert.throws(() => validateStatusTransition('cancelled', 'running'), /Invalid task status transition/);
+    assert.throws(() => validateStatusTransition('queued', 'done'), /Invalid task status transition/);
   });
 });
 
 describe('Phase 4: TaskManager Queue, Concurrency & Lifecycle', () => {
   it('creates, lists, and gets tasks', () => {
     const dir = createTempDir('forge-task-ops-');
-    const manager = new TaskManager({ concurrency: 0, repoCwd: dir, tasksDir: path.join(dir, 'tasks'), callModel: createFakeModelCall() });
+    const manager = new TaskManager({
+      concurrency: 0,
+      repoCwd: dir,
+      tasksDir: path.join(dir, 'tasks'),
+      callModel: createFakeModelCall(),
+    });
     const t1 = manager.create('First task');
     const t2 = manager.create('Second task');
 
@@ -241,7 +220,12 @@ describe('Phase 4: TaskManager Queue, Concurrency & Lifecycle', () => {
 
   it('cancelling a queued task removes it and marks it cancelled', async () => {
     const dir = createTempDir('forge-task-cancel-');
-    const manager = new TaskManager({ concurrency: 0, repoCwd: dir, tasksDir: path.join(dir, 'tasks'), callModel: createFakeModelCall() }); // Concurrency 0 means nothing runs automatically
+    const manager = new TaskManager({
+      concurrency: 0,
+      repoCwd: dir,
+      tasksDir: path.join(dir, 'tasks'),
+      callModel: createFakeModelCall(),
+    }); // Concurrency 0 means nothing runs automatically
     const task = manager.create('Will cancel');
     assert.equal(task.status, 'queued');
 
@@ -251,7 +235,12 @@ describe('Phase 4: TaskManager Queue, Concurrency & Lifecycle', () => {
 
   it('resumes an interrupted/failed task back to queued', () => {
     const dir = createTempDir('forge-task-resume-');
-    const manager = new TaskManager({ concurrency: 0, repoCwd: dir, tasksDir: path.join(dir, 'tasks'), callModel: createFakeModelCall() });
+    const manager = new TaskManager({
+      concurrency: 0,
+      repoCwd: dir,
+      tasksDir: path.join(dir, 'tasks'),
+      callModel: createFakeModelCall(),
+    });
     const task = manager.create('Interrupted task');
 
     // Simulate interruption
@@ -267,20 +256,27 @@ describe('Phase 4: TaskManager Queue, Concurrency & Lifecycle', () => {
 
   it('emits events on task lifecycle changes', () => {
     const dir = createTempDir('forge-task-events-');
-    const manager = new TaskManager({ concurrency: 0, repoCwd: dir, tasksDir: path.join(dir, 'tasks'), callModel: createFakeModelCall() });
+    const manager = new TaskManager({
+      concurrency: 0,
+      repoCwd: dir,
+      tasksDir: path.join(dir, 'tasks'),
+      callModel: createFakeModelCall(),
+    });
     const events: string[] = [];
 
     manager.on('task:created', () => events.push('created'));
     manager.on('task:status', () => events.push('status'));
 
-    const task = manager.create('Event test');
+    manager.create('Event test');
     assert.ok(events.includes('created'));
   });
 
   it('defers a write-locked task without spinning or stalling the queue', async () => {
     const dir = createTempDir('forge-lock-');
     let release!: () => void;
-    const gate = new Promise<void>(resolve => { release = resolve; });
+    const gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
     const callModel = () => ({
       async *getTextStream() {
         await gate;
@@ -361,8 +357,14 @@ describe('Phase 4: TaskManager Queue, Concurrency & Lifecycle', () => {
 
       second.log(task.id, { type: 'info', content: 'after restart' });
       const merged = second.getLog(task.id);
-      assert.deepEqual(merged.map(entry => entry.content), ['before restart', 'after restart']);
-      assert.deepEqual(merged.map(entry => entry.seq), [1, 2]);
+      assert.deepEqual(
+        merged.map(entry => entry.content),
+        ['before restart', 'after restart'],
+      );
+      assert.deepEqual(
+        merged.map(entry => entry.seq),
+        [1, 2],
+      );
     } finally {
       await second.shutdown({ graceMs: 0 });
     }
@@ -374,7 +376,6 @@ describe('Phase 4: TaskManager Queue, Concurrency & Lifecycle', () => {
     const parentGoal = 'parent waits for child';
     const childGoal = 'child shares the working tree';
 
-    let manager: TaskManager | undefined;
     let parentCwd = '';
     let childCwd = '';
 
@@ -403,15 +404,11 @@ describe('Phase 4: TaskManager Queue, Concurrency & Lifecycle', () => {
       async *getToolCallsStream() {},
     });
 
-    manager = new TaskManager({ concurrency: 1, repoCwd: dir, tasksDir, callModel });
+    const manager = new TaskManager({ concurrency: 1, repoCwd: dir, tasksDir, callModel });
 
     try {
       const parent = manager.create(parentGoal, { cwd: dir, isolation: 'shared' });
-      await waitFor(
-        () => manager!.get(parent.id)?.status === 'done',
-        5000,
-        'parent and child to finish',
-      );
+      await waitFor(() => manager.get(parent.id)?.status === 'done', 5000, 'parent and child to finish');
 
       const child = manager.list().find(task => task.goal === childGoal)!;
       assert.equal(child.status, 'done');
@@ -426,7 +423,12 @@ describe('Phase 4: TaskManager Queue, Concurrency & Lifecycle', () => {
 
   it('gives write-capable children the parent cwd and shared isolation', async () => {
     const dir = createTempDir('forge-child-shared-');
-    const manager = new TaskManager({ concurrency: 0, repoCwd: dir, tasksDir: path.join(dir, 'tasks'), callModel: createFakeModelCall() });
+    const manager = new TaskManager({
+      concurrency: 0,
+      repoCwd: dir,
+      tasksDir: path.join(dir, 'tasks'),
+      callModel: createFakeModelCall(),
+    });
 
     try {
       const parent = manager.create('Write-capable parent', {
@@ -522,7 +524,12 @@ describe('Phase 5: Approvals Inbox & Policies', () => {
 
   it('manager manages approval requests and resolution', async () => {
     const dir = createTempDir('forge-task-approvals-');
-    const manager = new TaskManager({ concurrency: 0, repoCwd: dir, tasksDir: path.join(dir, 'tasks'), callModel: createFakeModelCall() });
+    const manager = new TaskManager({
+      concurrency: 0,
+      repoCwd: dir,
+      tasksDir: path.join(dir, 'tasks'),
+      callModel: createFakeModelCall(),
+    });
     const task = manager.create('Approval test');
     task.status = 'running';
 
@@ -613,10 +620,7 @@ describe('Phase 6: Git Worktree Isolation & Review', () => {
       baseBranch: 'main',
     };
 
-    assert.throws(
-      () => removeWorktree(fakeInfo, repoDir),
-      /Refusing to remove non-agent branch/
-    );
+    assert.throws(() => removeWorktree(fakeInfo, repoDir), /Refusing to remove non-agent branch/);
   });
 });
 

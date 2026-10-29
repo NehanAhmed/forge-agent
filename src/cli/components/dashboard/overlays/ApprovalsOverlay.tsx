@@ -32,7 +32,9 @@ export function ApprovalsOverlay({
   if (approvals.length === 0) {
     return (
       <Box flexDirection="column" width={width} height={height} paddingX={1} aria-label="Approvals inbox">
-        <Text bold color={theme.accent}>Approvals</Text>
+        <Text bold color={theme.accent}>
+          Approvals
+        </Text>
         <Text dimColor>No pending approvals.</Text>
       </Box>
     );
@@ -50,11 +52,12 @@ export function ApprovalsOverlay({
   const currentTask = current ? taskById.get(current.taskId) : undefined;
   const contentWidth = Math.max(1, width - 2);
   const title = `${glyphs.approval} Approvals (${approvals.length})`;
-  const headerHints = width >= 76
-    ? `enter approve ${glyphs.bullet} n deny ${glyphs.bullet} A all ${glyphs.bullet} esc close`
-    : width >= 58
-      ? `enter/n ${glyphs.bullet} A all ${glyphs.bullet} esc`
-      : `enter/n ${glyphs.bullet} esc`;
+  const headerHints =
+    width >= 76
+      ? `enter approve ${glyphs.bullet} n deny ${glyphs.bullet} A all ${glyphs.bullet} esc close`
+      : width >= 58
+        ? `enter/n ${glyphs.bullet} A all ${glyphs.bullet} esc`
+        : `enter/n ${glyphs.bullet} esc`;
   const titleWidth = Math.max(1, contentWidth - cellWidth(headerHints) - 2);
 
   return (
@@ -67,13 +70,17 @@ export function ApprovalsOverlay({
       aria-label="Approvals inbox"
     >
       <Box justifyContent="space-between" width={contentWidth}>
-        <Text bold color={theme.warning}>{truncateCells(title, titleWidth)}</Text>
+        <Text bold color={theme.warning}>
+          {truncateCells(title, titleWidth)}
+        </Text>
         <Text dimColor>{headerHints}</Text>
       </Box>
 
       {confirmingAll && (
         <Text color={theme.warning}>
-          {pending ? 'Approving…' : `Approve all ${approvals.length} pending action${approvals.length === 1 ? '' : 's'}? y / n`}
+          {pending
+            ? 'Approving…'
+            : `Approve all ${approvals.length} pending action${approvals.length === 1 ? '' : 's'}? y / n`}
         </Text>
       )}
 
@@ -98,7 +105,9 @@ export function ApprovalsOverlay({
             aria-state={{ selected }}
             aria-label={`Approval for task ${task?.displayId ?? 'unknown'}: ${approval.tool}, ${approval.summary}`}
           >
-            <Text bold={selected} color={selected ? theme.focus : undefined}>{prefix}</Text>
+            <Text bold={selected} color={selected ? theme.focus : undefined}>
+              {prefix}
+            </Text>
             {body !== '' && <Text wrap="truncate">{body}</Text>}
             <Text dimColor>{suffix}</Text>
           </Box>
@@ -107,10 +116,9 @@ export function ApprovalsOverlay({
 
       {approvals.length > visible.length && (
         <Text dimColor>
-          {[
-            top > 0 ? 'more above…' : '',
-            top + visible.length < approvals.length ? 'more below…' : '',
-          ].filter(Boolean).join(` ${glyphs.bullet} `)}
+          {[top > 0 ? 'more above…' : '', top + visible.length < approvals.length ? 'more below…' : '']
+            .filter(Boolean)
+            .join(` ${glyphs.bullet} `)}
         </Text>
       )}
 

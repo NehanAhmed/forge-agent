@@ -12,9 +12,7 @@ function mergeEntries(fetched: LogEntry[], live: LogEntry[], limit: number): Log
   const bySeq = new Map<number, LogEntry>();
   for (const entry of fetched) bySeq.set(entry.seq, entry);
   for (const entry of live) bySeq.set(entry.seq, entry);
-  return [...bySeq.values()]
-    .sort((a, b) => a.seq - b.seq)
-    .slice(-Math.max(1, limit));
+  return [...bySeq.values()].sort((a, b) => a.seq - b.seq).slice(-Math.max(1, limit));
 }
 
 function errorMessage(error: unknown): string {
@@ -77,7 +75,8 @@ export function useTaskLogs(client: TaskClient, taskId: string | null, limit: nu
     setLoading(cached.length === 0);
     setError(null);
 
-    clientRef.current.getLog(taskId, { limit })
+    clientRef.current
+      .getLog(taskId, { limit })
       .then(fetched => {
         if (cancelled || !mountedRef.current) return;
         const live = cacheRef.current.get(taskId) ?? [];

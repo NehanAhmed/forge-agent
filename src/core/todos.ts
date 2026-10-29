@@ -20,8 +20,11 @@ const TODO_STORAGE_VERSION = 1;
 const MAX_TODOS = 50;
 const MAX_CONTENT_LENGTH = 200;
 
-function getTodoPath(sessionId: string): string {
-  const sessionsDir = path.join(process.cwd(), '.agent-sessions');
+function getDefaultSessionsDir(): string {
+  return path.join(process.cwd(), '.agent-sessions');
+}
+
+function getTodoPath(sessionId: string, sessionsDir = getDefaultSessionsDir()): string {
   return path.join(sessionsDir, `${sessionId}.todos.json`);
 }
 
@@ -51,7 +54,10 @@ function validateTodoList(todos: TodoItem[]): { valid: boolean; error?: string }
 
     // Check status
     if (!['pending', 'in_progress', 'completed'].includes(todo.status)) {
-      return { valid: false, error: `Invalid status "${todo.status}" for todo ${todo.id}. Must be pending, in_progress, or completed.` };
+      return {
+        valid: false,
+        error: `Invalid status "${todo.status}" for todo ${todo.id}. Must be pending, in_progress, or completed.`,
+      };
     }
 
     if (todo.status === 'in_progress') {
@@ -70,14 +76,17 @@ function validateTodoList(todos: TodoItem[]): { valid: boolean; error?: string }
   }
 
   if (inProgressCount > 1) {
-    return { valid: false, error: `Only one todo can be in_progress; found ${inProgressCount}: ${inProgressIds.join(', ')}` };
+    return {
+      valid: false,
+      error: `Only one todo can be in_progress; found ${inProgressCount}: ${inProgressIds.join(', ')}`,
+    };
   }
 
   return { valid: true };
 }
 
-export function loadTodos(sessionId: string): TodoList {
-  const todoPath = getTodoPath(sessionId);
+export function loadTodos(sessionId: string, sessionsDir?: string): TodoList {
+  const todoPath = getTodoPath(sessionId, sessionsDir);
   if (!fs.existsSync(todoPath)) {
     return createEmptyTodoList();
   }
@@ -101,7 +110,7 @@ export function loadTodos(sessionId: string): TodoList {
   }
 }
 
-export function saveTodos(sessionId: string, todos: TodoItem[]): TodoList {
+export function saveTodos(sessionId: string, todos: TodoItem[], sessionsDir?: string): TodoList {
   const validation = validateTodoList(todos);
   if (!validation.valid) {
     throw new Error(validation.error);
@@ -113,7 +122,9 @@ export function saveTodos(sessionId: string, todos: TodoItem[]): TodoList {
     updatedAt: Date.now(),
   };
 
-  const todoPath = getTodoPath(sessionId);
+  const dir = sessionsDir ?? getDefaultSessionsDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const todoPath = getTodoPath(sessionId, dir);
   const tempPath = `${todoPath}.tmp`;
 
   // Atomic write: write to temp file then rename
@@ -123,7 +134,12 @@ export function saveTodos(sessionId: string, todos: TodoItem[]): TodoList {
   return todoList;
 }
 
-export function getTodoCounts(todos: TodoItem[]): { total: number; completed: number; inProgress: number; pending: number } {
+export function getTodoCounts(todos: TodoItem[]): {
+  total: number;
+  completed: number;
+  inProgress: number;
+  pending: number;
+} {
   let completed = 0;
   let inProgress = 0;
   let pending = 0;

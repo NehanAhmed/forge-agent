@@ -38,6 +38,8 @@ const DEFAULT_CONFIG: ForgeConfig = {
   },
 };
 
+export { DEFAULT_CONFIG };
+
 function readBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
@@ -67,8 +69,7 @@ function atomicWrite(filePath: string, content: string): void {
   }
 }
 
-export function getConfig(): ForgeConfig {
-  const configPath = getConfigPath();
+export function getConfig(configPath = getConfigPath()): ForgeConfig {
   if (!fs.existsSync(configPath)) {
     return {
       children: { ...DEFAULT_CONFIG.children },
@@ -86,12 +87,14 @@ export function getConfig(): ForgeConfig {
       },
       ui: {
         bell: readBoolean(parsed.ui?.bell, DEFAULT_CONFIG.ui.bell),
-        logWindow: typeof parsed.ui?.logWindow === 'number' && parsed.ui.logWindow > 0
-          ? Math.floor(parsed.ui.logWindow)
-          : DEFAULT_CONFIG.ui.logWindow,
-        renderBatchMs: typeof parsed.ui?.renderBatchMs === 'number' && parsed.ui.renderBatchMs >= 0
-          ? Math.floor(parsed.ui.renderBatchMs)
-          : DEFAULT_CONFIG.ui.renderBatchMs,
+        logWindow:
+          typeof parsed.ui?.logWindow === 'number' && parsed.ui.logWindow > 0
+            ? Math.floor(parsed.ui.logWindow)
+            : DEFAULT_CONFIG.ui.logWindow,
+        renderBatchMs:
+          typeof parsed.ui?.renderBatchMs === 'number' && parsed.ui.renderBatchMs >= 0
+            ? Math.floor(parsed.ui.renderBatchMs)
+            : DEFAULT_CONFIG.ui.renderBatchMs,
         ascii: readBoolean(parsed.ui?.ascii, DEFAULT_CONFIG.ui.ascii),
         timestamps: readBoolean(parsed.ui?.timestamps, DEFAULT_CONFIG.ui.timestamps),
         showCost: readBoolean(parsed.ui?.showCost, DEFAULT_CONFIG.ui.showCost),
@@ -107,20 +110,20 @@ export function getConfig(): ForgeConfig {
   }
 }
 
-export function updateConfig(patch: Partial<ForgeConfig>): ForgeConfig {
-  const current = getConfig();
+export function updateConfig(patch: Partial<ForgeConfig>, configPath = getConfigPath()): ForgeConfig {
+  const current = getConfig(configPath);
   const updated: ForgeConfig = {
     children: { ...current.children, ...patch.children },
     ui: { ...current.ui, ...patch.ui },
   };
-  const configDir = path.join(os.homedir(), '.forge');
+  const configDir = path.dirname(configPath);
   fs.mkdirSync(configDir, { recursive: true });
   let existing: Record<string, unknown> = {};
   try {
-    existing = JSON.parse(fs.readFileSync(getConfigPath(), 'utf-8')) as Record<string, unknown>;
+    existing = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
   } catch {
     // Keep writing defaults when the file is missing or malformed.
   }
-  atomicWrite(getConfigPath(), JSON.stringify({ ...existing, ...updated }, null, 2));
+  atomicWrite(configPath, JSON.stringify({ ...existing, ...updated }, null, 2));
   return updated;
 }

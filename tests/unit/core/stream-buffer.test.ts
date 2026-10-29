@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { StreamCoalescer } from '../src/core/stream-buffer.js';
+import { StreamCoalescer } from '../../../src/core/stream-buffer.js';
 
 describe('StreamCoalescer', () => {
   it('flushes when the character budget is reached', () => {
