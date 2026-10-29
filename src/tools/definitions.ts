@@ -5,7 +5,8 @@ import {
   runBash,
   readFile,
   writeFile,
-  editFile,
+  editFileOnce,
+  editFileAll,
   spawnSubAgent,
   searchCodebase,
   gitStatus,
@@ -44,6 +45,7 @@ export function createTools(ctx: AgentContext) {
     createReadFileTool(ctx),
     createWriteFileTool(ctx),
     createReplaceStringTool(ctx),
+    createReplaceAllStringsTool(ctx),
     createSpawnSubAgentTool(ctx),
     createSearchCodeTool(ctx),
     createGitStatusTool(ctx),
@@ -58,7 +60,7 @@ function createRunBashTool(ctx: AgentContext) {
   return tool({
     name: 'run_bash',
     description:
-      'Execute a shell command in the current working directory. Use this for listing files, searching code (grep/find), checking git status, running scripts, or any other shell operation. Returns combined stdout/stderr. Prefer read_file over `cat` for reading a single file, and prefer replace_string_in_file over shell text-manipulation (sed/awk) for editing.',
+      'Execute a shell command in the current working directory. Use this for listing files, searching code (grep/find), checking git status, running scripts, or any other shell operation. Returns combined stdout/stderr. Prefer read_file over `cat` for reading a single file, and prefer replace_string_in_file / replace_all_strings over shell text-manipulation (sed/awk) for editing.',
     inputSchema: z.object({
       command: z.string().describe('A single shell command to execute, e.g. "ls -la" or "grep -rn TODO src/"'),
     }),
@@ -86,7 +88,7 @@ function createWriteFileTool(ctx: AgentContext) {
   return tool({
     name: 'write_file',
     description:
-      'Create a new file or completely overwrite an existing file with the given content. Use this only for creating new files or when the entire file content should be replaced. For modifying part of an existing file, use replace_string_in_file instead — it is safer and preserves everything else in the file.',
+      'Create a new file or completely overwrite an existing file with the given content. Use this only for creating new files or when the entire file content should be replaced. For modifying part of an existing file, use replace_string_in_file (one exact match) or replace_all_strings (every match) instead — they are safer and preserve everything else in the file.',
     inputSchema: z.object({
       path: z.string().describe('Relative or absolute path to the file to write.'),
       content: z.string().describe('The full content to write to the file, replacing anything already there.'),
@@ -103,7 +105,7 @@ function createReplaceStringTool(ctx: AgentContext) {
   return tool({
     name: 'replace_string_in_file',
     description:
-      'Make a precise, surgical edit to an existing file by replacing one exact occurrence of a string with a new string. This is the preferred way to modify part of a file — it leaves the rest of the file untouched. stringToReplace must match EXACTLY ONE location in the file, character-for-character (including whitespace/indentation).',
+      'Make a precise, surgical edit to an existing file by replacing exactly one occurrence of a string with a new string. This is the preferred way to modify part of a file — it leaves the rest of the file untouched. stringToReplace must match EXACTLY ONE location in the file, character-for-character (including whitespace and indentation). If the string appears more than once, the edit is refused and you are told how many matches were found; include more surrounding context to make the match unique, or use replace_all_strings when every occurrence should change.',
     inputSchema: z.object({
       path: z.string().describe('Relative or absolute path to the file to edit.'),
       stringToReplace: z
@@ -113,7 +115,27 @@ function createReplaceStringTool(ctx: AgentContext) {
     }),
     execute: async ({ path, stringToReplace, newString }) => {
       return executeWithPolicy(ctx, 'write', 'replace_string_in_file', { path, stringToReplace, newString }, () => ({
-        result: editFile(ctx, path, stringToReplace, newString),
+        result: editFileOnce(ctx, path, stringToReplace, newString),
+      }));
+    },
+  });
+}
+
+function createReplaceAllStringsTool(ctx: AgentContext) {
+  return tool({
+    name: 'replace_all_strings',
+    description:
+      'Replace every occurrence of a string in an existing file. Use this only when you intentionally want to change every matching location in the file (for example, renaming a constant or a duplicated import). For a single, surgical edit prefer replace_string_in_file, which refuses when the match is ambiguous. stringToReplace must match at least one location.',
+    inputSchema: z.object({
+      path: z.string().describe('Relative or absolute path to the file to edit.'),
+      stringToReplace: z
+        .string()
+        .describe('The exact existing text to find and replace. Every occurrence is replaced.'),
+      newString: z.string().describe('The text to replace it with.'),
+    }),
+    execute: async ({ path, stringToReplace, newString }) => {
+      return executeWithPolicy(ctx, 'write', 'replace_all_strings', { path, stringToReplace, newString }, () => ({
+        result: editFileAll(ctx, path, stringToReplace, newString),
       }));
     },
   });

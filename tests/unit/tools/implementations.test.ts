@@ -2,7 +2,15 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { editFile, readFile, runBash, searchCodebase, writeFile } from '../../../src/tools/implementations.js';
+import {
+  editFile,
+  editFileAll,
+  editFileOnce,
+  readFile,
+  runBash,
+  searchCodebase,
+  writeFile,
+} from '../../../src/tools/implementations.js';
 import { createTestContext } from '../../helpers/context.js';
 import { tempDir } from '../../helpers/temp.js';
 import { hasRipgrep } from '../../helpers/guards.js';
@@ -16,7 +24,7 @@ describe('file tools', () => {
     assert.equal(readFile(ctx, 'nested/file.txt'), 'hello world');
 
     const edited = editFile(ctx, 'nested/file.txt', 'world', 'forge');
-    assert.match(edited, /Successfully replaced 1 occurence/);
+    assert.match(edited, /Successfully replaced 1 occurrence/);
     assert.equal(fs.readFileSync(path.join(cwd, 'nested', 'file.txt'), 'utf-8'), 'hello forge');
   });
 
@@ -36,6 +44,31 @@ describe('file tools', () => {
     const ctx = createTestContext({ cwd });
     writeFile(ctx, 'a.txt', 'hello');
     assert.match(editFile(ctx, 'a.txt', 'nope', 'yes'), /was not found/);
+  });
+
+  it('refuses a single edit when the search string matches more than once', t => {
+    const cwd = tempDir(t, 'forge-files-multi-');
+    const ctx = createTestContext({ cwd });
+    writeFile(ctx, 'dup.txt', 'foo bar foo');
+    const result = editFileOnce(ctx, 'dup.txt', 'foo', 'baz');
+    assert.match(result, /matches 2 locations/);
+    assert.equal(fs.readFileSync(path.join(cwd, 'dup.txt'), 'utf-8'), 'foo bar foo');
+  });
+
+  it('replaces every occurrence with replace_all_strings', t => {
+    const cwd = tempDir(t, 'forge-files-all-');
+    const ctx = createTestContext({ cwd });
+    writeFile(ctx, 'dup.txt', 'foo bar foo');
+    const result = editFileAll(ctx, 'dup.txt', 'foo', 'baz');
+    assert.match(result, /Successfully replaced 2 occurrence/);
+    assert.equal(fs.readFileSync(path.join(cwd, 'dup.txt'), 'utf-8'), 'baz bar baz');
+  });
+
+  it('editFileAll reports when the search string is missing', t => {
+    const cwd = tempDir(t, 'forge-files-all-missing-');
+    const ctx = createTestContext({ cwd });
+    writeFile(ctx, 'a.txt', 'hello');
+    assert.match(editFileAll(ctx, 'a.txt', 'nope', 'yes'), /was not found/);
   });
 });
 

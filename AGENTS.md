@@ -165,10 +165,13 @@ npm `gitHead` must all agree. Code merged after a tag waits for the next release
   `core/task.ts` (state machine), `core/worktree.ts` (create/checkpoint/diff/merge/
   discard, path+branch guards), `core/approvals.ts` (policies, command allowlist),
   `core/persistence.ts` (atomic task state), `core/budget.ts`, `core/tree.ts`.
-- Tools — `src/tools/definitions.ts` wires 13 zod schemas to `implementations.ts`:
-  `run_bash`, `read_file`, `write_file`, `replace_string_in_file`, `spawn_sub_agent`,
-  `search_code`, `git_status`/`git_diff`/`git_add`/`git_commit`,
+- Tools — `src/tools/definitions.ts` wires 14 zod schemas to `implementations.ts`:
+  `run_bash`, `read_file`, `write_file`, `replace_string_in_file`,
+  `replace_all_strings`, `spawn_sub_agent`, `search_code`,
+  `git_status`/`git_diff`/`git_add`/`git_commit`,
   `spawn_task`/`wait_for_tasks`/`get_task`.
+  `replace_string_in_file` refuses when the search string matches more than one
+  location; `replace_all_strings` replaces every occurrence.
 - TUI — `src/ui/*.ts` is pure logic (text width, keymap, selection, layout, log view,
   tree building) and is what most tests cover; `src/cli/components/dashboard/**`
   holds Ink components/hooks. Put behavior in `src/ui` so it stays testable.

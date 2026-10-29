@@ -158,20 +158,76 @@ export function writeFile(ctx: AgentContext, filePath: string, content: string):
   }
 }
 
-export function editFile(ctx: AgentContext, path: string, oldContent: string, newContent: string): string {
+/**
+ * Count how many times `oldContent` appears in `content`.
+ * Uses `String.prototype.split` so the count is exact even for empty
+ * `oldContent` (which matches between every character).
+ */
+export function countOccurrences(content: string, oldContent: string): number {
+  if (!oldContent) return 0;
+  return content.split(oldContent).length - 1;
+}
+
+/**
+ * Make a single, surgical edit to an existing file.
+ *
+ * - Returns an actionable error if the file cannot be read or the path
+ *   resolves outside the working directory.
+ * - Returns an error if the search string is missing.
+ * - Returns an error if the search string matches **more than one** location;
+ *   the caller must supply more surrounding context to make the match unique.
+ * - Replaces exactly one occurrence and reports how many were found.
+ */
+export function editFileOnce(ctx: AgentContext, path: string, oldContent: string, newContent: string): string {
   try {
     const safePath = resolveSafePath(path, ctx.cwd);
     const content = fs.readFileSync(safePath, 'utf-8');
-    const occurences = content.split(oldContent).length - 1;
-    if (occurences === 0) {
-      return `ERROR: The string "${oldContent}" was not found in the file.`;
+    const occurrences = countOccurrences(content, oldContent);
+    if (occurrences === 0) {
+      return `ERROR: The string "${oldContent}" was not found in ${path}.`;
+    }
+    if (occurrences > 1) {
+      return (
+        `ERROR: The string "${oldContent}" matches ${occurrences} locations in ${path}. ` +
+        'Use replace_all_strings to change every occurrence, or include more surrounding ' +
+        'context so the match is unique.'
+      );
     }
     const updatedContent = content.replace(oldContent, newContent);
     fs.writeFileSync(safePath, updatedContent, 'utf-8');
-    return `Successfully replaced ${occurences} occurence(s) of "${oldContent}" with "${newContent}" in ${path}`;
+    return `Successfully replaced 1 occurrence of "${oldContent}" with "${newContent}" in ${path}.`;
   } catch (err: any) {
     return `ERROR: ${err.message}`;
   }
+}
+
+/**
+ * Replace every occurrence of `oldContent` in an existing file.
+ *
+ * - Returns an actionable error if the file cannot be read or the path
+ *   resolves outside the working directory.
+ * - Returns an error if the search string is missing.
+ * - Replaces all occurrences and reports how many were changed.
+ */
+export function editFileAll(ctx: AgentContext, path: string, oldContent: string, newContent: string): string {
+  try {
+    const safePath = resolveSafePath(path, ctx.cwd);
+    const content = fs.readFileSync(safePath, 'utf-8');
+    const occurrences = countOccurrences(content, oldContent);
+    if (occurrences === 0) {
+      return `ERROR: The string "${oldContent}" was not found in ${path}.`;
+    }
+    const updatedContent = content.split(oldContent).join(newContent);
+    fs.writeFileSync(safePath, updatedContent, 'utf-8');
+    return `Successfully replaced ${occurrences} occurrence(s) of "${oldContent}" with "${newContent}" in ${path}.`;
+  } catch (err: any) {
+    return `ERROR: ${err.message}`;
+  }
+}
+
+/** @deprecated Use `editFileOnce` or `editFileAll`. Kept for backwards compatibility. */
+export function editFile(ctx: AgentContext, path: string, oldContent: string, newContent: string): string {
+  return editFileOnce(ctx, path, oldContent, newContent);
 }
 
 export async function spawnSubAgent(ctx: AgentContext, task: string): Promise<string> {

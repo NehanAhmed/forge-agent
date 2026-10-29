@@ -127,7 +127,7 @@ one log write and one re-render each.
 | --- | --- |
 | `read_file`, `search_code`, `git_status`, `git_diff` | read |
 | `run_bash` | exec |
-| `write_file`, `replace_string_in_file` | write |
+| `write_file`, `replace_string_in_file`, `replace_all_strings` | write |
 | `git_add`, `git_commit` | write |
 | `spawn_sub_agent` | read-only child agent |
 | `spawn_task`, `wait_for_tasks`, `get_task` | task control |
