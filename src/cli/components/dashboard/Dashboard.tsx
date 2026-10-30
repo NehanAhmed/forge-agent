@@ -339,12 +339,32 @@ export function Dashboard({ client }: DashboardProps) {
       return;
     }
     openConfirm(
-      'Discard',
+      'Discard Worktree',
       `#${task.displayId} ${task.goal}`,
       `deletes ${task.worktree.branch} and its worktree (cannot be undone)`,
       async () => {
         await client.discardTask(task.id);
-        notify('info', `Discarded #${task.displayId}`);
+        notify('info', `Discarded worktree for #${task.displayId}`);
+      },
+    );
+  }
+
+  function requestDelete(task: Task) {
+    if (isActiveTask(task)) {
+      notify('error', `#${task.displayId} is active. Cancel it before deleting.`);
+      return;
+    }
+    const row = treeRows.find(item => item.task.id === task.id);
+    const descendants = row?.descendantCount ?? 0;
+    openConfirm(
+      'Delete Task',
+      `#${task.displayId} ${task.goal}`,
+      descendants > 0
+        ? `permanently deletes this task, its logs, worktree, and ${descendants} child task(s)`
+        : 'permanently deletes this task, logs, and worktree',
+      async () => {
+        await client.deleteTask(task.id, { force: true });
+        notify('info', `Deleted #${task.displayId}`);
       },
     );
   }
@@ -572,6 +592,9 @@ export function Dashboard({ client }: DashboardProps) {
         case 'discard':
           requestDiscard(requireTask(parsed.target));
           break;
+        case 'delete':
+          requestDelete(requireTask(parsed.target));
+          break;
         case 'collapse':
         case 'expand': {
           const task = requireTask(parsed.target);
@@ -659,6 +682,10 @@ export function Dashboard({ client }: DashboardProps) {
         break;
       case 'discardTask':
         if (selectedTask) requestDiscard(selectedTask);
+        else notify('error', 'Select a task first.');
+        break;
+      case 'deleteTask':
+        if (selectedTask) requestDelete(selectedTask);
         else notify('error', 'Select a task first.');
         break;
       case 'diffTask':
@@ -829,7 +856,7 @@ export function Dashboard({ client }: DashboardProps) {
     : focus === 'input'
       ? `enter run${dot}/ commands${dot}tab list${dot}esc list`
       : focus === 'list'
-        ? `${nav} select${dot}${lr} fold${dot}enter open${dot}a approvals${dot}? help`
+        ? `${nav} select${dot}${lr} fold${dot}enter open${dot}d del${dot}x discard${dot}m merge${dot}c cancel${dot}a approvals${dot}? help`
         : `${nav} scroll${dot}f follow${dot}v verbose${dot}esc back`;
 
   return (

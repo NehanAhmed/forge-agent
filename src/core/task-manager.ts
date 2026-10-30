@@ -12,6 +12,7 @@ import {
   appendTaskLog,
   loadTaskLog,
   getTaskStateDir,
+  deleteTaskStorage,
   type TaskIndex,
 } from './persistence.js';
 import { runAgentHeadless } from './headless.js';
@@ -1064,6 +1065,51 @@ export class TaskManager extends EventEmitter {
     this.scheduleSave();
     this.emit('task:review', { taskId: id, reviewState: 'discarded' });
   }
+
+  async delete(id: string, force = false): Promise<void> {
+    const task = this.tasks.get(id);
+    if (!task) throw new Error(`Task not found: ${id}`);
+    if (!force && (task.status === 'running' || task.status === 'waiting_approval')) {
+      throw new Error(`Cannot delete active task #${task.displayId}. Cancel it first.`);
+    }
+
+    // Cancel if running
+    if (task.status === 'running' || task.status === 'waiting_approval' || task.status === 'queued') {
+      await this.cancel(id);
+    }
+
+    // Recursively delete children? Or just error? Let's check for children.
+    const children = descendantsOf(Array.from(this.tasks.values()), id);
+    if (children.length > 0 && !force) {
+      throw new Error(`Task #${task.displayId} has ${children.length} children. Delete them first or use force.`);
+    }
+
+    // Remove worktree if exists
+    if (task.worktree) {
+      try {
+        removeWorktree(task.worktree, this.repoCwd, force);
+      } catch (err: any) {
+        if (!force) throw err;
+      }
+    }
+
+    // Remove from memory
+    this.tasks.delete(id);
+
+    // Remove approvals
+    for (const [approvalId, approval] of this.approvals.entries()) {
+      if (approval.taskId === id) {
+        approval.resolver(false);
+        this.approvals.delete(approvalId);
+      }
+    }
+
+    // Clean up storage
+    deleteTaskStorage(id, this.tasksDir);
+    this.scheduleSave();
+    // No specific event for deletion, assuming UI will react to updated tasks list.
+  }
+
 
   async shutdown(opts?: { graceMs?: number }): Promise<void> {
     this.shuttingDown = true;

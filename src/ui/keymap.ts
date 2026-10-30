@@ -44,6 +44,7 @@ export type DashboardAction =
   | { type: 'resumeTask' }
   | { type: 'mergeTask' }
   | { type: 'discardTask' }
+  | { type: 'deleteTask' }
   | { type: 'diffTask' }
   | { type: 'cycleFilter' }
   | { type: 'focusInput'; seed?: string }
@@ -135,6 +136,7 @@ export function resolveAction(input: string, key: KeyLike, context: KeyContext):
   if (input === 'r') return { type: 'resumeTask' };
   if (input === 'm') return { type: 'mergeTask' };
   if (input === 'x') return { type: 'discardTask' };
+  if (input === 'd' || key.delete) return { type: 'deleteTask' };
   if (input === 'D' || (input === 'd' && key.shift)) return { type: 'diffTask' };
   if (input === 's') return { type: 'cycleFilter' };
   if (input === 'f') return { type: 'toggleFollow' };

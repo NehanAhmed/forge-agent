@@ -33,6 +33,7 @@ export interface TaskClient {
   getDiff(id: string): Promise<TaskDiff>;
   mergeTask(id: string): Promise<MergeResult>;
   discardTask(id: string, opts?: { force?: boolean }): Promise<void>;
+  deleteTask(id: string, opts?: { force?: boolean }): Promise<void>;
   subscribe(handler: (event: TaskEvent) => void): () => void;
 }
 
@@ -105,6 +106,10 @@ export class InProcessTaskClient implements TaskClient {
 
   async discardTask(id: string, opts?: { force?: boolean }): Promise<void> {
     return this.manager.discard(id, opts?.force);
+  }
+
+  async deleteTask(id: string, opts?: { force?: boolean }): Promise<void> {
+    return this.manager.delete(id, opts?.force);
   }
 
   subscribe(handler: (event: TaskEvent) => void): () => void {

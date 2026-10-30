@@ -21,6 +21,7 @@ const HELP_ROWS: Array<[string, string]> = [
   ['r', 'resume failed task'],
   ['m', 'merge reviewed task'],
   ['x', 'discard worktree'],
+  ['d', 'delete task'],
   ['D', 'show diff'],
   ['s', 'filter: all / active / attention'],
   ['f', 'follow log tail'],
