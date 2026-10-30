@@ -78,7 +78,9 @@ if (options.coverage) {
 }
 
 if (options.watch) {
-  nodeArgs.push('--watch', '--watch-path=tests', '--watch-path=src');
+  // --watch-path is incompatible with --test; plain --watch watches the
+  // entry point and all required/imported modules automatically.
+  nodeArgs.push('--watch');
 }
 
 if (options.filter) {

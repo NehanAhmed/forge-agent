@@ -10,11 +10,19 @@ export interface TestRepo {
 }
 
 export function runGit(cwd: string, args: string[]): string {
+  // Strip git repository-location variables so test repos never inherit
+  // the outer repository's GIT_DIR, GIT_WORK_TREE, or GIT_INDEX_FILE.
+  const env: Record<string, string | undefined> = { ...process.env };
+  delete env.GIT_DIR;
+  delete env.GIT_WORK_TREE;
+  delete env.GIT_INDEX_FILE;
+  env.GIT_TERMINAL_PROMPT = '0';
+
   return execFileSync('git', args, {
     cwd,
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    env,
   }).trim();
 }
 
