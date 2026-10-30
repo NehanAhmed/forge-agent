@@ -8,12 +8,40 @@ const WORKTREES_DIR = path.join(os.homedir(), '.forge', 'worktrees');
 
 function normalizePath(target: string): string {
   const resolved = path.resolve(target);
-  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  try {
+    // Resolve 8.3 short names, junctions, and symlinks to the canonical path.
+    // On Windows CI runners, os.homedir() frequently returns an 8.3 short
+    // name (e.g. RUNNER~1) while git reports the resolved long name. Keeping
+    // both sides in the same canonical form is what makes the managed-path
+    // guard and orphan detection reliable. Case is deliberately preserved so
+    // the returned path still matches what `git worktree list` reports.
+    return fs.realpathSync(resolved);
+  } catch {
+    // Path may not exist yet (e.g. WORKTREES_DIR before first use).
+    return resolved;
+  }
+}
+
+function samePath(a: string, b: string): boolean {
+  const ra = path.resolve(a);
+  const rb = path.resolve(b);
+  if (process.platform !== 'win32') return ra === rb;
+  // Windows filesystems are case-insensitive; compare case-insensitively so a
+  // worktree created under C:\Users\runneradmin is still recognized when git
+  // reports it as C:\Users\RunnerAdmin.
+  return ra.toLowerCase() === rb.toLowerCase();
 }
 
 function isManagedWorktreePath(target: string): boolean {
-  const relative = path.relative(normalizePath(WORKTREES_DIR), normalizePath(target));
-  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+  const managed = normalizePath(WORKTREES_DIR);
+  const candidate = normalizePath(target);
+  const relative = path.relative(managed, candidate);
+  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+    return false;
+  }
+  // path.relative may succeed on case-variant paths even when the resolved
+  // paths are the same directory, so confirm with a case-insensitive check.
+  return samePath(candidate, path.resolve(managed, relative));
 }
 
 export interface WorktreeInfo {
@@ -82,7 +110,11 @@ export function createWorktree(taskId: string, goal: string, repoCwd: string): W
   const shortId = taskId.replace('task_', '').slice(0, 8);
   const slug = sanitizeSlug(goal);
   const branch = `agent/task-${shortId}-${slug}`;
-  const worktreePath = path.join(WORKTREES_DIR, taskId);
+  // Normalize the path so `info.path` is canonical. On Windows CI runners
+  // `os.homedir()` frequently returns an 8.3 short name (RUNNER~1) while git
+  // reports the resolved long name; keeping both sides in the same form is
+  // what makes the managed-path guard and orphan detection reliable.
+  const worktreePath = normalizePath(path.join(WORKTREES_DIR, taskId));
 
   // Get current HEAD and branch
   const baseRef = runGit(['rev-parse', 'HEAD'], repoCwd);
@@ -113,8 +145,12 @@ export function createWorktree(taskId: string, goal: string, repoCwd: string): W
   // Create the worktree
   runGit(['worktree', 'add', worktreePath, '-b', branch], repoCwd);
 
+  // The worktree now exists, so normalizePath can resolve 8.3 short names,
+  // junctions, and symlinks to the canonical form git will also report.
+  const canonicalPath = normalizePath(worktreePath);
+
   return {
-    path: worktreePath,
+    path: canonicalPath,
     branch,
     baseRef,
     baseBranch,
@@ -357,7 +393,10 @@ export function listOrphanedWorktrees(repoCwd: string, knownTaskIds: Set<string>
           // Check if this worktree belongs to a known task
           const taskId = path.basename(currentPath);
           if (!knownTaskIds.has(taskId)) {
-            orphans.push(currentPath);
+            // Return the canonical path so it matches the paths handed out by
+            // createWorktree() even when git reports an 8.3 short name or a
+            // different case on Windows.
+            orphans.push(normalizePath(currentPath));
           }
         }
       }
