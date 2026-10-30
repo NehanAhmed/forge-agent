@@ -1,7 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { assignDisplayId, enforceSpawnLimits, stricterPolicy, parseTaskRef, resolveTaskByIdOrDisplay } from '../src/core/tree.js';
-import type { Task } from '../src/core/task.js';
+import {
+  assignDisplayId,
+  enforceSpawnLimits,
+  stricterPolicy,
+  parseTaskRef,
+  resolveTaskByIdOrDisplay,
+} from '../../../src/core/tree.js';
+import type { Task } from '../../../src/core/task.js';
 
 describe('Child Tasks Pure Logic', () => {
   describe('assignDisplayId', () => {

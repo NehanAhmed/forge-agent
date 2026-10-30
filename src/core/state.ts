@@ -3,7 +3,7 @@ import path from 'path';
 import type { StateAccessor, ConversationState } from '@openrouter/agent';
 import type { Message } from '../types/index.js';
 import { compactIfNeeded, DEFAULT_COMPACTION_CONFIG } from './compaction.js';
-import { loadTodos, saveTodos, mergeTodosIntoState, extractTodosFromState, type TodoList } from './todos.js';
+import { loadTodos, saveTodos, mergeTodosIntoState, extractTodosFromState } from './todos.js';
 type SessionMetaEntry = { id: string; title: string; createdAt: number; modelId?: string };
 
 import os from 'os';
@@ -20,13 +20,12 @@ const getSessionsDir = (taskId?: string): string => {
 };
 
 const META_SESSION_DIR = path.join(os.homedir(), '.forge', 'meta');
-const ensureMetaDir = () => {
+const META_FILE = path.join(META_SESSION_DIR, 'meta.json');
+function ensureMetaDir(): void {
   if (!fs.existsSync(META_SESSION_DIR)) {
     fs.mkdirSync(META_SESSION_DIR, { recursive: true });
   }
-};
-ensureMetaDir();
-const META_FILE = path.join(META_SESSION_DIR, 'meta.json');
+}
 export type SessionSummary = {
   id: string;
   updatedAt: number;
@@ -48,7 +47,8 @@ function getStatePath(sessionId: string, stateDir?: string): string {
 export function createStateAccessor(
   sessionId: string,
   stateDir?: string,
-  compactionConfig = DEFAULT_COMPACTION_CONFIG
+  compactionConfig = DEFAULT_COMPACTION_CONFIG,
+  todosDir?: string,
 ): StateAccessor {
   const dir = stateDir ?? getSessionsDir();
   ensureDir(dir);
@@ -61,7 +61,7 @@ export function createStateAccessor(
         const data = fs.readFileSync(statePath, 'utf-8');
         const state = JSON.parse(data) as ConversationState;
         // Load todos and merge into state
-        const todos = loadTodos(sessionId);
+        const todos = loadTodos(sessionId, todosDir);
         return mergeTodosIntoState(state, todos);
       } catch {
         return null;
@@ -71,7 +71,7 @@ export function createStateAccessor(
       const compacted = await compactIfNeeded(state, compactionConfig);
       // Extract and save todos separately
       const todos = extractTodosFromState(compacted);
-      saveTodos(sessionId, todos.items);
+      saveTodos(sessionId, todos.items, todosDir);
       // Save state without todos (todos are stored separately)
       const { todos: _unused, ...stateWithoutTodos } = compacted as any;
       fs.writeFileSync(statePath, JSON.stringify(stateWithoutTodos, null, 2));
@@ -186,8 +186,6 @@ export function stateToMessages(state: ConversationState): Message[] {
 
 export { compactIfNeeded, DEFAULT_COMPACTION_CONFIG, type CompactionConfig } from './compaction.js';
 
-
-
 function readMeta(): SessionMetaEntry[] {
   if (!fs.existsSync(META_FILE)) return [];
   try {
@@ -206,6 +204,7 @@ export function saveSessionTitle(sessionId: string, title: string, modelId?: str
     const entry = meta[existingIndex];
     if (entry) entry.modelId = modelId;
   }
+  ensureMetaDir();
   fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2));
 }
 

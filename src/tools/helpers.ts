@@ -1,5 +1,5 @@
-import path from "path";
-import fs from "fs";
+import path from 'path';
+import fs from 'fs';
 
 type RgEvent = {
   type: 'begin' | 'match' | 'context' | 'end' | 'summary';
@@ -32,21 +32,38 @@ export function resolveSafePath(inputPath: string, cwd: string): string {
     throw new Error(`Path "${inputPath}" resolves outside the working directory and is not allowed.`);
   }
 
-  // Check for symlink escape - verify real path is still inside cwd
-  try {
-    const realPath = normalizeForCompare(fs.realpathSync(resolved));
-    const realCwd = normalizeForCompare(fs.realpathSync(resolvedCwd));
-    if (!realPath.startsWith(realCwd + path.sep) && realPath !== realCwd) {
-      throw new Error(`Path "${inputPath}" escapes via symlink and is not allowed.`);
+  // Check for symlink escape. Walk every existing ancestor of the target path
+  // down to (and including) the cwd boundary and verify none resolve outside
+  // cwd. This covers the case where the final file does not exist yet but a
+  // parent directory is a symlink pointing outside the sandbox.
+  const realCwd = normalizeForCompare(safeRealpath(resolvedCwd) ?? resolvedCwd);
+  let current = resolved;
+  while (true) {
+    const real = safeRealpath(current);
+    if (real !== null) {
+      const normReal = normalizeForCompare(real);
+      if (!normReal.startsWith(realCwd + path.sep) && normReal !== realCwd) {
+        throw new Error(`Path "${inputPath}" escapes via symlink and is not allowed.`);
+      }
     }
-  } catch (err: any) {
-    // If file doesn't exist yet, we can't check symlinks - allow it
-    if (err.code !== 'ENOENT') {
-      throw err;
-    }
+    // Stop once we've checked down to the cwd itself — ancestors above it are
+    // allowed to be anywhere and must not be compared against realCwd.
+    if (path.resolve(current) === resolvedCwd) break;
+    const parent = path.dirname(current);
+    if (parent === current) break; // reached filesystem root
+    current = parent;
   }
 
   return resolved;
+}
+
+/** Return fs.realpathSync result, or null when the path does not exist. */
+function safeRealpath(p: string): string | null {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return null;
+  }
 }
 export const formatRgOutput = (output: string, maxTotalMatches = 60): string => {
   const lines = output.trim().split('\n').filter(Boolean);
@@ -55,7 +72,12 @@ export const formatRgOutput = (output: string, maxTotalMatches = 60): string => 
   let truncated = false;
 
   for (const line of lines) {
-    const event: RgEvent = JSON.parse(line);
+    let event: RgEvent;
+    try {
+      event = JSON.parse(line) as RgEvent;
+    } catch {
+      continue;
+    }
     if (event.type !== 'match' && event.type !== 'context') continue;
 
     if (event.type === 'match') {
@@ -88,7 +110,9 @@ export const formatRgOutput = (output: string, maxTotalMatches = 60): string => 
   }
 
   if (truncated) {
-    outputs.push(`\n[Results truncated at ${maxTotalMatches} matches — refine your search pattern (e.g. narrow the path or use a more specific pattern) for complete results.]`);
+    outputs.push(
+      `\n[Results truncated at ${maxTotalMatches} matches — refine your search pattern (e.g. narrow the path or use a more specific pattern) for complete results.]`,
+    );
   }
 
   return outputs.join('\n').trim();

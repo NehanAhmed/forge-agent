@@ -5,7 +5,16 @@
   "license": "MIT",
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
-    "test": "tsx --test tests/*.test.ts",
+    "test": "node scripts/run-tests.mjs",
+    "test:unit": "node scripts/run-tests.mjs --unit",
+    "test:integration": "node scripts/run-tests.mjs --integration",
+    "test:watch": "node scripts/run-tests.mjs --watch",
+    "test:coverage": "node scripts/run-tests.mjs --coverage",
+    "lint": "eslint . --max-warnings=0",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\" \"scripts/**/*.{js,ts}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\" \"scripts/**/*.{js,ts}\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "build": "npm run clean && tsc && npm run postbuild",
     "postbuild": "node ./scripts/add-shebang.js",
     "prepack": "npm run build",
@@ -55,10 +64,16 @@
     "zod": "^4.6.6"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
+    "eslint": "^10.13.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "ink-testing-library": "^4.0.0",
+    "prettier": "^3.9.10",
     "tsx": "^4.23.12",
-    "typescript": "^7.0.2"
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.72.1"
   }
 }

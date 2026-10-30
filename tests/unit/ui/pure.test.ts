@@ -1,9 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCommand } from '../src/ui/parser.js';
-import { buildTree, getVisibleRows } from '../src/ui/tree-builder.js';
-import { getStatusGlyph, needsAttention } from '../src/ui/status-glyphs.js';
-import { createTask } from '../src/core/task.js';
+import { parseCommand } from '../../../src/ui/parser.js';
+import { buildTree, getVisibleRows } from '../../../src/ui/tree-builder.js';
+import { getStatusGlyph, needsAttention } from '../../../src/ui/status-glyphs.js';
+import { createTask } from '../../../src/core/task.js';
 
 describe('UI Pure Modules', () => {
   describe('Command Parser', () => {

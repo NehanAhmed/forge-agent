@@ -122,34 +122,22 @@ export function Dashboard({ client }: DashboardProps) {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [resolving, setResolving] = useState<Set<string>>(() => new Set());
 
-  const treeRows = useMemo(
-    () => getVisibleRows(buildTree(tasks), collapsed),
-    [tasks, collapsed],
-  );
+  const treeRows = useMemo(() => getVisibleRows(buildTree(tasks), collapsed), [tasks, collapsed]);
   const filteredRows = useMemo(() => filterRows(treeRows, filter), [treeRows, filter]);
-  const selectedTask = useMemo(
-    () => tasks.find(task => task.id === selectedId) ?? null,
-    [tasks, selectedId],
-  );
-  const selectedIndex = useMemo(
-    () => rowIndex(filteredRows, selectedId),
-    [filteredRows, selectedId],
-  );
-  const { entries, loading: logLoading, error: logError } = useTaskLogs(
-    client,
-    selectedId,
-    config.ui.logWindow,
-  );
+  const selectedTask = useMemo(() => tasks.find(task => task.id === selectedId) ?? null, [tasks, selectedId]);
+  const selectedIndex = useMemo(() => rowIndex(filteredRows, selectedId), [filteredRows, selectedId]);
+  const { entries, loading: logLoading, error: logError } = useTaskLogs(client, selectedId, config.ui.logWindow);
   const hasActiveTasks = tasks.some(isActiveTask);
   const now = useClock(hasActiveTasks && !screenReader);
 
   const logLines = useMemo(
-    () => buildLogLines(entries, {
-      width: layout.detailTextWidth,
-      timestamps: config.ui.timestamps,
-      verbose,
-      ascii,
-    }),
+    () =>
+      buildLogLines(entries, {
+        width: layout.detailTextWidth,
+        timestamps: config.ui.timestamps,
+        verbose,
+        ascii,
+      }),
     [entries, layout.detailTextWidth, config.ui.timestamps, verbose, ascii],
   );
   const logWindow = useMemo(
@@ -166,8 +154,11 @@ export function Dashboard({ client }: DashboardProps) {
     if (!loaded) return;
     setSelectedId(current => {
       if (current && rowIndex(filteredRows, current) !== -1) return current;
-      const fallback = pickInitialSelection(filteredRows, tasks.map(task => task.id));
-      return current ? nearestVisible(filteredRows, tasks, current) ?? fallback : fallback;
+      const fallback = pickInitialSelection(
+        filteredRows,
+        tasks.map(task => task.id),
+      );
+      return current ? (nearestVisible(filteredRows, tasks, current) ?? fallback) : fallback;
     });
   }, [loaded, tasks, filteredRows]);
 
@@ -177,11 +168,7 @@ export function Dashboard({ client }: DashboardProps) {
       return;
     }
     setListTop(current =>
-      ensureVisible(
-        selectedIndex,
-        clampTop(current, filteredRows.length, layout.listRows),
-        layout.listRows,
-      ),
+      ensureVisible(selectedIndex, clampTop(current, filteredRows.length, layout.listRows), layout.listRows),
     );
   }, [selectedIndex, filteredRows.length, layout.listRows]);
 
@@ -192,7 +179,7 @@ export function Dashboard({ client }: DashboardProps) {
 
   useEffect(() => {
     if (follow) {
-      if (scrollOffset !== 0) setScrollOffset(0);
+      setScrollOffset(offset => (offset === 0 ? offset : 0));
       return;
     }
     setScrollOffset(offset => Math.min(offset, logWindow.maxOffset));
@@ -214,9 +201,7 @@ export function Dashboard({ client }: DashboardProps) {
     if (overlay?.kind !== 'approvals') return;
     const max = Math.max(0, approvals.length - 1);
     if (overlay.index > max) {
-      setOverlay(current =>
-        current?.kind === 'approvals' ? { ...current, index: max } : current,
-      );
+      setOverlay(current => (current?.kind === 'approvals' ? { ...current, index: max } : current));
     }
   }, [approvals.length, overlay]);
 
@@ -225,7 +210,8 @@ export function Dashboard({ client }: DashboardProps) {
     if (!diffTaskId) return;
     let cancelled = false;
 
-    client.getDiff(diffTaskId)
+    client
+      .getDiff(diffTaskId)
       .then(diff => {
         if (cancelled) return;
         const lines = diff.diff ? diff.diff.split(/\r?\n/) : [];
@@ -248,23 +234,16 @@ export function Dashboard({ client }: DashboardProps) {
     return () => {
       cancelled = true;
     };
-  }, [client, diffTaskId]);
+  }, [client, diffTaskId, dot]);
 
-  function openConfirm(
-    title: string,
-    target: string,
-    consequence: string,
-    action: () => Promise<void>,
-  ) {
+  function openConfirm(title: string, target: string, consequence: string, action: () => Promise<void>) {
     setOverlay({ kind: 'confirm', request: { title, target, consequence, action }, pending: false });
   }
 
   async function runConfirm() {
     if (overlay?.kind !== 'confirm' || overlay.pending) return;
     const request = overlay.request;
-    setOverlay(current =>
-      current?.kind === 'confirm' ? { ...current, pending: true } : current,
-    );
+    setOverlay(current => (current?.kind === 'confirm' ? { ...current, pending: true } : current));
     try {
       await request.action();
       setOverlay(null);
@@ -342,7 +321,7 @@ export function Dashboard({ client }: DashboardProps) {
           throw new Error(
             result.conflictedFiles?.length
               ? `Merge conflict in ${result.conflictedFiles.join(', ')}`
-              : result.message ?? 'Merge failed',
+              : (result.message ?? 'Merge failed'),
           );
         }
         notify('info', `Merged #${task.displayId}`);
@@ -392,10 +371,7 @@ export function Dashboard({ client }: DashboardProps) {
     try {
       await client.resolveApproval(approval.id, decision);
       const displayId = tasks.find(task => task.id === approval.taskId)?.displayId ?? approval.taskId;
-      notify(
-        'info',
-        `${decision === 'approve' ? 'Approved' : 'Denied'} ${approval.tool} for #${displayId}`,
-      );
+      notify('info', `${decision === 'approve' ? 'Approved' : 'Denied'} ${approval.tool} for #${displayId}`);
     } catch (error: unknown) {
       notify('error', errorText(error));
     } finally {
@@ -487,9 +463,7 @@ export function Dashboard({ client }: DashboardProps) {
     if (!selectedTask) return;
     setFollow(false);
     const lineDelta = -delta * (page ? layout.detailRows : 1);
-    setScrollOffset(offset =>
-      clampScroll((follow ? 0 : offset) + lineDelta, logLines.length, layout.detailRows),
-    );
+    setScrollOffset(offset => clampScroll((follow ? 0 : offset) + lineDelta, logLines.length, layout.detailRows));
   }
 
   function scrollLogEdge(edge: 'first' | 'last') {
@@ -638,9 +612,7 @@ export function Dashboard({ client }: DashboardProps) {
         break;
       case 'closeOverlay':
         setOverlay(current =>
-          current?.kind === 'approvals' && current.confirmingAll
-            ? { ...current, confirmingAll: false }
-            : null,
+          current?.kind === 'approvals' && current.confirmingAll ? { ...current, confirmingAll: false } : null,
         );
         break;
       case 'cycleFocus':
@@ -726,10 +698,7 @@ export function Dashboard({ client }: DashboardProps) {
       case 'overlayMove':
         setOverlay(current => {
           if (current?.kind !== 'approvals') return current;
-          const index = Math.min(
-            Math.max(0, approvals.length - 1),
-            Math.max(0, current.index + action.delta),
-          );
+          const index = Math.min(Math.max(0, approvals.length - 1), Math.max(0, current.index + action.delta));
           return { ...current, index };
         });
         break;
@@ -753,9 +722,7 @@ export function Dashboard({ client }: DashboardProps) {
         break;
       case 'overlayCancelApproveAll':
         if (busy) break;
-        setOverlay(current =>
-          current?.kind === 'approvals' ? { ...current, confirmingAll: false } : current,
-        );
+        setOverlay(current => (current?.kind === 'approvals' ? { ...current, confirmingAll: false } : current));
         break;
       case 'overlayConfirmYes':
         void runConfirm();
@@ -818,14 +785,15 @@ export function Dashboard({ client }: DashboardProps) {
     setInput(current => (current + cleaned).slice(0, 4000));
   });
 
-  const confirm = overlay?.kind === 'confirm'
-    ? {
-        title: overlay.request.title,
-        target: overlay.request.target,
-        consequence: overlay.request.consequence,
-        pending: overlay.pending,
-      }
-    : null;
+  const confirm =
+    overlay?.kind === 'confirm'
+      ? {
+          title: overlay.request.title,
+          target: overlay.request.target,
+          consequence: overlay.request.consequence,
+          pending: overlay.pending,
+        }
+      : null;
 
   if (layout.mode === 'tiny') {
     const tinyHelp = overlay?.kind === 'help';
@@ -848,13 +816,14 @@ export function Dashboard({ client }: DashboardProps) {
   const showDetail = !layout.singlePane || focus === 'detail';
   const nav = ascii ? 'up/down' : '↑↓';
   const lr = ascii ? 'left/right' : '←→';
-  const overlayHints = overlay?.kind === 'approvals'
-    ? `${nav} select${dot}enter approve${dot}n deny${dot}A approve all${dot}esc close`
-    : overlay?.kind === 'diff'
-      ? `${nav} scroll${dot}pgup/pgdn page${dot}g/G top/bottom${dot}esc close`
-      : overlay?.kind === 'help'
-        ? 'esc close'
-        : '';
+  const overlayHints =
+    overlay?.kind === 'approvals'
+      ? `${nav} select${dot}enter approve${dot}n deny${dot}A approve all${dot}esc close`
+      : overlay?.kind === 'diff'
+        ? `${nav} scroll${dot}pgup/pgdn page${dot}g/G top/bottom${dot}esc close`
+        : overlay?.kind === 'help'
+          ? 'esc close'
+          : '';
   const hints = overlay
     ? overlayHints
     : focus === 'input'
@@ -875,12 +844,7 @@ export function Dashboard({ client }: DashboardProps) {
         columns={columns}
       />
 
-      <Box
-        flexDirection="row"
-        width={columns}
-        height={layout.mainHeight}
-        overflow="hidden"
-      >
+      <Box flexDirection="row" width={columns} height={layout.mainHeight} overflow="hidden">
         {overlay?.kind === 'help' ? (
           <HelpOverlay width={columns} height={layout.mainHeight} theme={theme} ascii={ascii} />
         ) : overlay?.kind === 'approvals' ? (
@@ -909,12 +873,7 @@ export function Dashboard({ client }: DashboardProps) {
         ) : (
           <>
             {showList && (
-              <Box
-                width={layout.listWidth}
-                flexDirection="column"
-                paddingX={1}
-                overflow="hidden"
-              >
+              <Box width={layout.listWidth} flexDirection="column" paddingX={1} overflow="hidden">
                 <TaskList
                   rows={filteredRows}
                   selectedId={selectedId}

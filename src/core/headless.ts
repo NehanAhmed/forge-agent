@@ -1,7 +1,6 @@
-import { stepCountIs, type ConversationState } from '@openrouter/agent';
+import { stepCountIs } from '@openrouter/agent';
 import { createTools } from '../tools/definitions.js';
-import { buildSystemPrompt, MAX_ITERATIONS } from '../core/constants.js';
-import { createStateAccessor } from '../core/state.js';
+import { buildSystemPrompt } from '../core/constants.js';
 import type { AgentContext } from '../core/context.js';
 import { DEFAULT_MODEL_ID } from '../core/models.js';
 import { StreamCoalescer } from '../core/stream-buffer.js';
@@ -45,10 +44,14 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
       return;
     }
     const timer = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => {
-      clearTimeout(timer);
-      reject(signal.reason ?? new Error('Aborted'));
-    }, { once: true });
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        reject(signal.reason ?? new Error('Aborted'));
+      },
+      { once: true },
+    );
   });
 }
 
@@ -103,7 +106,7 @@ export async function runAgentHeadless(
       const stream = new StreamCoalescer({
         maxChars: 512,
         maxDelayMs: 120,
-        onFlush: (text) => ctx.log({ type: 'assistant', content: text }),
+        onFlush: text => ctx.log({ type: 'assistant', content: text }),
       });
       try {
         for await (const delta of result.getTextStream()) {
@@ -173,13 +176,14 @@ export async function runAgentHeadless(
 
       // Fatal or max retries
       const errMsg = err?.error?.message ?? err?.message ?? String(err);
-      const code = err?.status === 401 || err?.status === 403
-        ? 'auth_failure'
-        : err?.status === 429
-          ? 'rate_limited'
-          : isRetryableError(err)
-            ? 'max_retries'
-            : 'fatal';
+      const code =
+        err?.status === 401 || err?.status === 403
+          ? 'auth_failure'
+          : err?.status === 429
+            ? 'rate_limited'
+            : isRetryableError(err)
+              ? 'max_retries'
+              : 'fatal';
 
       ctx.log({ type: 'error', content: `Agent run failed: ${errMsg}` });
 

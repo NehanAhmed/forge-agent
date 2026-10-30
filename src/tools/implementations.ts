@@ -1,4 +1,5 @@
 import fs from 'fs';
+import path from 'path';
 import { execFileSync, execSync } from 'child_process';
 import { createTools } from './definitions.js';
 import { MODEL, SUBAGENT_MAX_ITERATIONS, SUBAGENT_TOOLS, SYSTEM_PROMPT } from '../core/constants.js';
@@ -55,7 +56,9 @@ export function gitDiff(ctx: AgentContext, staged: boolean = false, paths: strin
   let output = runGit(args, ctx.cwd);
   if (output.startsWith('ERROR:')) return output;
   if (output.length > DIFF_TRUNCATE_LIMIT) {
-    output = output.slice(0, DIFF_TRUNCATE_LIMIT) + `\n\n[Output truncated at ${DIFF_TRUNCATE_LIMIT} characters — narrow your paths or use staged diff for smaller output.]`;
+    output =
+      output.slice(0, DIFF_TRUNCATE_LIMIT) +
+      `\n\n[Output truncated at ${DIFF_TRUNCATE_LIMIT} characters — narrow your paths or use staged diff for smaller output.]`;
   }
   return output;
 }
@@ -144,30 +147,87 @@ export function readFile(ctx: AgentContext, path: string): string {
   }
 }
 
-export function writeFile(ctx: AgentContext, path: string, content: string): string {
+export function writeFile(ctx: AgentContext, filePath: string, content: string): string {
   try {
-    const safePath = resolveSafePath(path, ctx.cwd);
+    const safePath = resolveSafePath(filePath, ctx.cwd);
+    fs.mkdirSync(path.dirname(safePath), { recursive: true });
     fs.writeFileSync(safePath, content, 'utf-8');
-    return `File written successfully to ${path}`;
+    return `File written successfully to ${filePath}`;
   } catch (err: any) {
     return `ERROR: ${err.message}`;
   }
 }
 
-export function editFile(ctx: AgentContext, path: string, oldContent: string, newContent: string): string {
+/**
+ * Count how many times `oldContent` appears in `content`.
+ * Uses `String.prototype.split` so the count is exact even for empty
+ * `oldContent` (which matches between every character).
+ */
+export function countOccurrences(content: string, oldContent: string): number {
+  if (!oldContent) return 0;
+  return content.split(oldContent).length - 1;
+}
+
+/**
+ * Make a single, surgical edit to an existing file.
+ *
+ * - Returns an actionable error if the file cannot be read or the path
+ *   resolves outside the working directory.
+ * - Returns an error if the search string is missing.
+ * - Returns an error if the search string matches **more than one** location;
+ *   the caller must supply more surrounding context to make the match unique.
+ * - Replaces exactly one occurrence and reports how many were found.
+ */
+export function editFileOnce(ctx: AgentContext, path: string, oldContent: string, newContent: string): string {
   try {
     const safePath = resolveSafePath(path, ctx.cwd);
     const content = fs.readFileSync(safePath, 'utf-8');
-    const occurences = content.split(oldContent).length - 1;
-    if (occurences === 0) {
-      return `ERROR: The string "${oldContent}" was not found in the file.`;
+    const occurrences = countOccurrences(content, oldContent);
+    if (occurrences === 0) {
+      return `ERROR: The string "${oldContent}" was not found in ${path}.`;
+    }
+    if (occurrences > 1) {
+      return (
+        `ERROR: The string "${oldContent}" matches ${occurrences} locations in ${path}. ` +
+        'Use replace_all_strings to change every occurrence, or include more surrounding ' +
+        'context so the match is unique.'
+      );
     }
     const updatedContent = content.replace(oldContent, newContent);
     fs.writeFileSync(safePath, updatedContent, 'utf-8');
-    return `Successfully replaced ${occurences} occurence(s) of "${oldContent}" with "${newContent}" in ${path}`;
+    return `Successfully replaced 1 occurrence of "${oldContent}" with "${newContent}" in ${path}.`;
   } catch (err: any) {
     return `ERROR: ${err.message}`;
   }
+}
+
+/**
+ * Replace every occurrence of `oldContent` in an existing file.
+ *
+ * - Returns an actionable error if the file cannot be read or the path
+ *   resolves outside the working directory.
+ * - Returns an error if the search string is missing.
+ * - Replaces all occurrences and reports how many were changed.
+ */
+export function editFileAll(ctx: AgentContext, path: string, oldContent: string, newContent: string): string {
+  try {
+    const safePath = resolveSafePath(path, ctx.cwd);
+    const content = fs.readFileSync(safePath, 'utf-8');
+    const occurrences = countOccurrences(content, oldContent);
+    if (occurrences === 0) {
+      return `ERROR: The string "${oldContent}" was not found in ${path}.`;
+    }
+    const updatedContent = content.split(oldContent).join(newContent);
+    fs.writeFileSync(safePath, updatedContent, 'utf-8');
+    return `Successfully replaced ${occurrences} occurrence(s) of "${oldContent}" with "${newContent}" in ${path}.`;
+  } catch (err: any) {
+    return `ERROR: ${err.message}`;
+  }
+}
+
+/** @deprecated Use `editFileOnce` or `editFileAll`. Kept for backwards compatibility. */
+export function editFile(ctx: AgentContext, path: string, oldContent: string, newContent: string): string {
+  return editFileOnce(ctx, path, oldContent, newContent);
 }
 
 export async function spawnSubAgent(ctx: AgentContext, task: string): Promise<string> {
@@ -177,8 +237,7 @@ export async function spawnSubAgent(ctx: AgentContext, task: string): Promise<st
     policy: 'read_only',
     taskId: undefined, // Sub-agents are ephemeral
   };
-  const readOnlyTools = createTools(subCtx)
-    .filter(t => SUBAGENT_TOOLS.includes(t.function.name));
+  const readOnlyTools = createTools(subCtx).filter(t => SUBAGENT_TOOLS.includes(t.function.name));
   let result;
   try {
     result = getClient().callModel({
@@ -198,7 +257,12 @@ export async function spawnSubAgent(ctx: AgentContext, task: string): Promise<st
   }
 }
 
-export function searchCodebase(ctx: AgentContext, pattern: string, path: string = '.', maxResults: number = 60): string {
+export function searchCodebase(
+  ctx: AgentContext,
+  pattern: string,
+  path: string = '.',
+  maxResults: number = 60,
+): string {
   const inputPath = path && path.trim() ? path : '.';
   const cappedMax = Math.min(maxResults, 150);
   let resolvedPath: string;
@@ -211,15 +275,27 @@ export function searchCodebase(ctx: AgentContext, pattern: string, path: string 
     const output = execFileSync(
       'rg',
       [
-        '--json', '-n', '-C', '2', '--max-count', String(cappedMax),
-        '--glob', '!node_modules',
-        '--glob', '!dist',
-        '--glob', '!.git',
-        '--glob', '!*.lock',
-        '--glob', '!package-lock.json',
-        '--', pattern, resolvedPath,
+        '--json',
+        '-n',
+        '-C',
+        '2',
+        '--max-count',
+        String(cappedMax),
+        '--glob',
+        '!node_modules',
+        '--glob',
+        '!dist',
+        '--glob',
+        '!.git',
+        '--glob',
+        '!*.lock',
+        '--glob',
+        '!package-lock.json',
+        '--',
+        pattern,
+        resolvedPath,
       ],
-      { encoding: 'utf-8', timeout: 10_000, maxBuffer: 10 * 1024 * 1024 }
+      { encoding: 'utf-8', timeout: 10_000, maxBuffer: 10 * 1024 * 1024 },
     );
     return formatRgOutput(output, cappedMax);
   } catch (err: any) {
@@ -228,7 +304,10 @@ export function searchCodebase(ctx: AgentContext, pattern: string, path: string 
   }
 }
 
-export function todoWrite(sessionId: string, todos: Array<{ id: string; content: string; status: 'pending' | 'in_progress' | 'completed' }>): string {
+export function todoWrite(
+  sessionId: string,
+  todos: Array<{ id: string; content: string; status: 'pending' | 'in_progress' | 'completed' }>,
+): string {
   try {
     const saved = saveTodos(sessionId, todos as TodoItem[]);
     const counts = getTodoCounts(saved.items);

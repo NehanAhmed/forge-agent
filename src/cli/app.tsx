@@ -11,7 +11,14 @@ import Gradient from 'ink-gradient';
 import { randomUUID } from 'crypto';
 import { runAgent, type LogEvent } from './agent-cli.js';
 import { AGENT_NAME } from '../core/constants.js';
-import { getLatestSessionId, listSessions, saveSessionTitle, getSessionModel, CODING_MODELS, DEFAULT_MODEL_ID, getModelName, type ModelInfo } from '../core/index.js';
+import {
+  getLatestSessionId,
+  saveSessionTitle,
+  getSessionModel,
+  CODING_MODELS,
+  DEFAULT_MODEL_ID,
+  getModelName,
+} from '../core/index.js';
 import { listSessionMeta, createStateAccessor } from '../core/state.js';
 import { ModelPickerModal } from './components/ModelPickerModal.js';
 import type { AgentContext, ApprovalRequest } from '../core/context.js';
@@ -39,11 +46,10 @@ if (cliArgs[0] === 'config' && cliArgs[1] === 'set-key') {
   } catch {
     // Start from an empty object when the file is missing or invalid.
   }
-  fs.writeFileSync(
-    configPath,
-    JSON.stringify({ ...existing, apiKey: key }, null, 2),
-    { encoding: 'utf-8', mode: 0o600 },
-  );
+  fs.writeFileSync(configPath, JSON.stringify({ ...existing, apiKey: key }, null, 2), {
+    encoding: 'utf-8',
+    mode: 0o600,
+  });
   console.log('API key saved.');
   process.exit(0);
 }
@@ -63,8 +69,12 @@ function Header({ sessionId, title, modelName }: { sessionId: string; title: str
         <Gradient name="pastel">
           <Text bold>▲ {AGENT_NAME}</Text>
         </Gradient>
-        <Text dimColor>model: {modelName} | session: {sessionId.slice(0, 8)}</Text>
-        <Text dimColor>title: {title || 'Unnamed'} | dir: {process.cwd()}</Text>
+        <Text dimColor>
+          model: {modelName} | session: {sessionId.slice(0, 8)}
+        </Text>
+        <Text dimColor>
+          title: {title || 'Unnamed'} | dir: {process.cwd()}
+        </Text>
       </Box>
     </Box>
   );
@@ -75,14 +85,18 @@ function EntryLine({ entry }: { entry: DisplayEntry }) {
     case 'user':
       return (
         <Box marginTop={1}>
-          <Text color="cyanBright" bold>{'❯ '}</Text>
+          <Text color="cyanBright" bold>
+            {'❯ '}
+          </Text>
           <Text color="cyanBright">{entry.text}</Text>
         </Box>
       );
     case 'reasoning':
       return (
         <Box marginTop={1} paddingLeft={2} borderStyle="round" borderColor="gray" flexDirection="column">
-          <Text dimColor italic>{entry.text}</Text>
+          <Text dimColor italic>
+            {entry.text}
+          </Text>
         </Box>
       );
     case 'tool_call':
@@ -122,9 +136,7 @@ function resolveSessionId(): string {
 
   if (resumeIdx !== -1) {
     const specifiedId = args[resumeIdx + 1];
-    const targetId = specifiedId && !specifiedId.startsWith('--')
-      ? specifiedId
-      : getLatestSessionId();
+    const targetId = specifiedId && !specifiedId.startsWith('--') ? specifiedId : getLatestSessionId();
 
     if (targetId) return targetId;
   }
@@ -140,7 +152,11 @@ function App() {
   const sessionIdRef = useRef<string>(resolveSessionId());
   const sessionId = sessionIdRef.current;
   const [entries, setEntries] = useState<DisplayEntry[]>([]);
-  const [usage, setUsage] = useState<{ inputTokens: number; outputTokens: number; cost: number }>({ inputTokens: 0, outputTokens: 0, cost: 0 });
+  const [usage, setUsage] = useState<{ inputTokens: number; outputTokens: number; cost: number }>({
+    inputTokens: 0,
+    outputTokens: 0,
+    cost: 0,
+  });
   const [title, setTitle] = useState<string | null>(null);
   const [currentModelId, setCurrentModelId] = useState<string>(DEFAULT_MODEL_ID);
   const [showModelPicker, setShowModelPicker] = useState(false);
@@ -176,7 +192,7 @@ function App() {
     });
   }
 
-  useInput((inputChar) => {
+  useInput(inputChar => {
     if (!pendingConfirm) return;
     const lower = inputChar.toLowerCase();
     if (lower === 'y' || lower === 'n') {
@@ -217,7 +233,10 @@ function App() {
       return;
     }
     if (lower === '/help') {
-      pushEntry('info', 'Available commands:\n/clear - Clear the chat history\n/help - Show this help message\n/exit - Exit the application\n/models - Open model picker\n/model <id> - Quick switch model');
+      pushEntry(
+        'info',
+        'Available commands:\n/clear - Clear the chat history\n/help - Show this help message\n/exit - Exit the application\n/models - Open model picker\n/model <id> - Quick switch model',
+      );
       setInput('');
       return;
     }
@@ -253,7 +272,12 @@ function App() {
     setIsProcessing(true);
 
     const usageLimit = (inputTokens: number, outputTokens: number, cost: number | undefined) => {
-      setUsage(prev => ({ ...prev, inputTokens: prev.inputTokens + inputTokens, outputTokens: prev.outputTokens + outputTokens, cost: prev.cost + (cost || 0) }));
+      setUsage(prev => ({
+        ...prev,
+        inputTokens: prev.inputTokens + inputTokens,
+        outputTokens: prev.outputTokens + outputTokens,
+        cost: prev.cost + (cost || 0),
+      }));
     };
 
     const onLog = (event: LogEvent) => {
@@ -289,7 +313,7 @@ function App() {
       policy: 'ask',
       maxDepth: getConfig().children.maxDepth,
       budget: createBudget({ maxRequests: 1000, maxTokens: 10_000_000 }), // Generous limits for interactive
-      log: (entry) => {
+      log: entry => {
         // Map log entries to LogEvent format
         if (entry.type === 'reasoning') {
           onLog({ type: 'reasoning_delta', content: entry.content });
@@ -305,11 +329,17 @@ function App() {
       callModel: getClient().callModel.bind(getClient()),
     };
 
-    await runAgent(sessionId, trimmed, {
-      onLog,
-      onConfirm: handleConfirm,
-      onUsage: usageLimit,
-    }, ctx, currentModelId);
+    await runAgent(
+      sessionId,
+      trimmed,
+      {
+        onLog,
+        onConfirm: handleConfirm,
+        onUsage: usageLimit,
+      },
+      ctx,
+      currentModelId,
+    );
 
     setIsProcessing(false);
   }
@@ -324,15 +354,24 @@ function App() {
       </Box>
       {pendingConfirm && (
         <Box marginTop={1} paddingX={1} borderStyle="round" borderColor="red">
-          <Text color="redBright" bold>{'⚠ '}</Text>
-          <Text color="red">Allow: {pendingConfirm}?  </Text>
+          <Text color="redBright" bold>
+            {'⚠ '}
+          </Text>
+          <Text color="red">Allow: {pendingConfirm}? </Text>
           <Text dimColor>(y/n)</Text>
         </Box>
       )}
       {!pendingConfirm && (
         <Box marginTop={1} paddingX={1} borderStyle="round" borderColor={isProcessing ? 'gray' : 'cyan'}>
-          <Text color="cyanBright" bold>{'❯ '}</Text>
-          <TextInput value={input} onChange={setInput} onSubmit={handleSubmit} focus={!isProcessing && !showModelPicker} />
+          <Text color="cyanBright" bold>
+            {'❯ '}
+          </Text>
+          <TextInput
+            value={input}
+            onChange={setInput}
+            onSubmit={handleSubmit}
+            focus={!isProcessing && !showModelPicker}
+          />
         </Box>
       )}
       {isProcessing && (
@@ -345,7 +384,11 @@ function App() {
       )}
       <Box marginTop={1}>
         <Text dimColor>type "/exit" to quit</Text>
-        <Text dimColor> | Input tokens used: {usage.inputTokens} | Output tokens used: {usage.outputTokens} | estimated cost: ${usage.cost.toFixed(4)}</Text>
+        <Text dimColor>
+          {' '}
+          | Input tokens used: {usage.inputTokens} | Output tokens used: {usage.outputTokens} | estimated cost: $
+          {usage.cost.toFixed(4)}
+        </Text>
       </Box>
       <ModelPickerModal
         isOpen={showModelPicker}
@@ -367,9 +410,7 @@ async function main() {
   }
 
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    console.error(
-      'Forge dashboard needs an interactive terminal. Run `forge chat` for the legacy chat UI.',
-    );
+    console.error('Forge dashboard needs an interactive terminal. Run `forge chat` for the legacy chat UI.');
     process.exitCode = 1;
     return;
   }

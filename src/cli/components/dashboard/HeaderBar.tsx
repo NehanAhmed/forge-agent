@@ -47,7 +47,9 @@ export function HeaderBar({ tasks, approvalsCount, filter, theme, glyphs, ascii,
       ? `${glyphs.approval} ${approvalsCount} approval${approvalsCount === 1 ? '' : 's'} ${glyphs.bullet} a`
       : '',
     columns >= 60 ? '? help' : '',
-  ].filter(Boolean).join(`  ${glyphs.bullet}  `);
+  ]
+    .filter(Boolean)
+    .join(`  ${glyphs.bullet}  `);
 
   const left = `forge  ${summary}`;
   const available = Math.max(1, columns - 2);
@@ -62,7 +64,9 @@ export function HeaderBar({ tasks, approvalsCount, filter, theme, glyphs, ascii,
       overflow="hidden"
       aria-label={`Forge dashboard. ${summary}.${approvalsCount > 0 ? ` ${approvalsCount} approvals pending.` : ''}`}
     >
-      <Text color={theme.muted} wrap="truncate">{line}</Text>
+      <Text color={theme.muted} wrap="truncate">
+        {line}
+      </Text>
     </Box>
   );
 }

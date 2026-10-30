@@ -44,9 +44,7 @@ export function buildLogLines(entries: LogEntry[], options: LogViewOptions): Log
     const prefix = `${time}${logGlyph(entry.type, options.ascii)} `;
     const prefixWidth = cellWidth(prefix);
     const available = Math.max(1, width - prefixWidth);
-    const content = sanitizeText(entry.content)
-      .replace(/\r\n?/g, '\n')
-      .replace(/\t/g, '  ');
+    const content = sanitizeText(entry.content).replace(/\r\n?/g, '\n').replace(/\t/g, '  ');
 
     if (options.verbose) {
       const wrapped = wrapCells(content, available);

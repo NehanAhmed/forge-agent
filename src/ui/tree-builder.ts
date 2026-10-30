@@ -1,5 +1,4 @@
 import type { Task } from '../core/task.js';
-import { descendantsOf } from '../core/tree.js';
 
 export interface TreeNode {
   task: Task;

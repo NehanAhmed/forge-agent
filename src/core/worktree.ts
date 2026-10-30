@@ -6,6 +6,44 @@ import os from 'os';
 const GIT_TIMEOUT = 30_000;
 const WORKTREES_DIR = path.join(os.homedir(), '.forge', 'worktrees');
 
+function normalizePath(target: string): string {
+  const resolved = path.resolve(target);
+  try {
+    // Resolve 8.3 short names, junctions, and symlinks to the canonical path.
+    // On Windows CI runners, os.homedir() frequently returns an 8.3 short
+    // name (e.g. RUNNER~1) while git reports the resolved long name. Keeping
+    // both sides in the same canonical form is what makes the managed-path
+    // guard and orphan detection reliable. Case is deliberately preserved so
+    // the returned path still matches what `git worktree list` reports.
+    return fs.realpathSync(resolved);
+  } catch {
+    // Path may not exist yet (e.g. WORKTREES_DIR before first use).
+    return resolved;
+  }
+}
+
+function samePath(a: string, b: string): boolean {
+  const ra = path.resolve(a);
+  const rb = path.resolve(b);
+  if (process.platform !== 'win32') return ra === rb;
+  // Windows filesystems are case-insensitive; compare case-insensitively so a
+  // worktree created under C:\Users\runneradmin is still recognized when git
+  // reports it as C:\Users\RunnerAdmin.
+  return ra.toLowerCase() === rb.toLowerCase();
+}
+
+function isManagedWorktreePath(target: string): boolean {
+  const managed = normalizePath(WORKTREES_DIR);
+  const candidate = normalizePath(target);
+  const relative = path.relative(managed, candidate);
+  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+    return false;
+  }
+  // path.relative may succeed on case-variant paths even when the resolved
+  // paths are the same directory, so confirm with a case-insensitive check.
+  return samePath(candidate, path.resolve(managed, relative));
+}
+
 export interface WorktreeInfo {
   path: string;
   branch: string;
@@ -37,7 +75,7 @@ function runGit(args: string[], cwd: string): string {
   } catch (err: any) {
     const stderr = err.stderr?.toString() ?? '';
     const stdout = err.stdout?.toString() ?? '';
-    throw new Error(`git ${args[0]} failed: ${stderr || stdout || err.message}`);
+    throw new Error(`git ${args[0]} failed: ${stderr || stdout || err.message}`, { cause: err });
   }
 }
 
@@ -72,7 +110,11 @@ export function createWorktree(taskId: string, goal: string, repoCwd: string): W
   const shortId = taskId.replace('task_', '').slice(0, 8);
   const slug = sanitizeSlug(goal);
   const branch = `agent/task-${shortId}-${slug}`;
-  const worktreePath = path.join(WORKTREES_DIR, taskId);
+  // Normalize the path so `info.path` is canonical. On Windows CI runners
+  // `os.homedir()` frequently returns an 8.3 short name (RUNNER~1) while git
+  // reports the resolved long name; keeping both sides in the same form is
+  // what makes the managed-path guard and orphan detection reliable.
+  const worktreePath = normalizePath(path.join(WORKTREES_DIR, taskId));
 
   // Get current HEAD and branch
   const baseRef = runGit(['rev-parse', 'HEAD'], repoCwd);
@@ -95,16 +137,20 @@ export function createWorktree(taskId: string, goal: string, repoCwd: string): W
     // Tree is dirty - this is allowed but worth logging
     console.warn(
       `[worktree] Warning: main working tree has uncommitted changes. ` +
-      `The worktree will branch from HEAD (${baseRef.slice(0, 8)}) ` +
-      `and will NOT include uncommitted changes.`
+        `The worktree will branch from HEAD (${baseRef.slice(0, 8)}) ` +
+        `and will NOT include uncommitted changes.`,
     );
   }
 
   // Create the worktree
   runGit(['worktree', 'add', worktreePath, '-b', branch], repoCwd);
 
+  // The worktree now exists, so normalizePath can resolve 8.3 short names,
+  // junctions, and symlinks to the canonical form git will also report.
+  const canonicalPath = normalizePath(worktreePath);
+
   return {
-    path: worktreePath,
+    path: canonicalPath,
     branch,
     baseRef,
     baseBranch,
@@ -113,7 +159,7 @@ export function createWorktree(taskId: string, goal: string, repoCwd: string): W
 
 export function removeWorktree(info: WorktreeInfo, repoCwd: string, force = false): void {
   // Only operate on worktrees under our managed directory
-  if (!info.path.startsWith(WORKTREES_DIR)) {
+  if (!isManagedWorktreePath(info.path)) {
     throw new Error(`Refusing to remove worktree outside managed directory: ${info.path}`);
   }
 
@@ -146,7 +192,7 @@ export function removeWorktree(info: WorktreeInfo, repoCwd: string, force = fals
 
 export function checkpointCommit(info: WorktreeInfo, message: string): void {
   // Only operate on worktrees under our managed directory
-  if (!info.path.startsWith(WORKTREES_DIR)) {
+  if (!isManagedWorktreePath(info.path)) {
     throw new Error(`Refusing to commit in worktree outside managed directory: ${info.path}`);
   }
 
@@ -192,7 +238,7 @@ export async function getDiff(info: WorktreeInfo): Promise<TaskDiff> {
   }
 
   // Get full diff
-  let diff = '';
+  let diff: string;
   try {
     diff = execFileSync('git', ['diff', `${info.baseRef}..HEAD`], {
       encoding: 'utf-8',
@@ -207,10 +253,11 @@ export async function getDiff(info: WorktreeInfo): Promise<TaskDiff> {
   // Get per-file stats
   const files: Array<{ path: string; additions: number; deletions: number }> = [];
   try {
-    const statsOutput = execFileSync(
-      'git', ['diff', '--numstat', `${info.baseRef}..HEAD`],
-      { encoding: 'utf-8', cwd: info.path, timeout: GIT_TIMEOUT }
-    );
+    const statsOutput = execFileSync('git', ['diff', '--numstat', `${info.baseRef}..HEAD`], {
+      encoding: 'utf-8',
+      cwd: info.path,
+      timeout: GIT_TIMEOUT,
+    });
     for (const line of statsOutput.trim().split('\n').filter(Boolean)) {
       const parts = line.split('\t');
       if (parts.length === 3) {
@@ -228,10 +275,11 @@ export async function getDiff(info: WorktreeInfo): Promise<TaskDiff> {
   // Get commits
   const commits: Array<{ sha: string; message: string }> = [];
   try {
-    const logOutput = execFileSync(
-      'git', ['log', `${info.baseRef}..HEAD`, '--format=%H %s'],
-      { encoding: 'utf-8', cwd: info.path, timeout: GIT_TIMEOUT }
-    );
+    const logOutput = execFileSync('git', ['log', `${info.baseRef}..HEAD`, '--format=%H %s'], {
+      encoding: 'utf-8',
+      cwd: info.path,
+      timeout: GIT_TIMEOUT,
+    });
     for (const line of logOutput.trim().split('\n').filter(Boolean)) {
       const spaceIdx = line.indexOf(' ');
       if (spaceIdx > 0) {
@@ -251,7 +299,7 @@ export async function getDiff(info: WorktreeInfo): Promise<TaskDiff> {
 export async function mergeWorktree(
   info: WorktreeInfo,
   repoCwd: string,
-  opts: { message?: string } = {}
+  opts: { message?: string } = {},
 ): Promise<MergeResult> {
   // Only operate on agent/ branches
   if (!info.branch.startsWith('agent/')) {
@@ -293,14 +341,15 @@ export async function mergeWorktree(
     }
 
     return { success: true };
-  } catch (err: any) {
+  } catch {
     // Merge conflict - abort and report
     const conflictedFiles: string[] = [];
     try {
-      const conflictOutput = execFileSync(
-        'git', ['diff', '--name-only', '--diff-filter=U'],
-        { encoding: 'utf-8', cwd: repoCwd, timeout: GIT_TIMEOUT }
-      );
+      const conflictOutput = execFileSync('git', ['diff', '--name-only', '--diff-filter=U'], {
+        encoding: 'utf-8',
+        cwd: repoCwd,
+        timeout: GIT_TIMEOUT,
+      });
       conflictedFiles.push(...conflictOutput.trim().split('\n').filter(Boolean));
     } catch {
       // Ignore
@@ -340,11 +389,14 @@ export function listOrphanedWorktrees(repoCwd: string, knownTaskIds: Set<string>
         currentPath = line.slice('worktree '.length).trim();
       } else if (line.startsWith('branch ')) {
         const branch = line.slice('branch '.length).trim().replace('refs/heads/', '');
-        if (branch.startsWith('agent/') && currentPath.startsWith(WORKTREES_DIR)) {
+        if (branch.startsWith('agent/') && isManagedWorktreePath(currentPath)) {
           // Check if this worktree belongs to a known task
           const taskId = path.basename(currentPath);
           if (!knownTaskIds.has(taskId)) {
-            orphans.push(currentPath);
+            // Return the canonical path so it matches the paths handed out by
+            // createWorktree() even when git reports an 8.3 short name or a
+            // different case on Windows.
+            orphans.push(normalizePath(currentPath));
           }
         }
       }

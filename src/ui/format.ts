@@ -13,7 +13,10 @@ export function formatDuration(ms: number): string {
 }
 
 /** Elapsed time for a task, frozen at finish time for terminal statuses. */
-export function taskElapsed(task: { startedAt?: number; finishedAt?: number; status: TaskStatus }, now: number): number | null {
+export function taskElapsed(
+  task: { startedAt?: number; finishedAt?: number; status: TaskStatus },
+  now: number,
+): number | null {
   if (!task.startedAt) return null;
   const terminal = task.status === 'done' || task.status === 'failed' || task.status === 'cancelled';
   const end = terminal && task.finishedAt ? task.finishedAt : now;
@@ -28,12 +31,18 @@ export function formatCost(cost: number): string {
 
 export function statusLabel(status: TaskStatus): string {
   switch (status) {
-    case 'queued': return 'queued';
-    case 'running': return 'running';
-    case 'waiting_approval': return 'waiting';
-    case 'done': return 'done';
-    case 'failed': return 'failed';
-    case 'cancelled': return 'cancelled';
+    case 'queued':
+      return 'queued';
+    case 'running':
+      return 'running';
+    case 'waiting_approval':
+      return 'waiting';
+    case 'done':
+      return 'done';
+    case 'failed':
+      return 'failed';
+    case 'cancelled':
+      return 'cancelled';
   }
 }
 

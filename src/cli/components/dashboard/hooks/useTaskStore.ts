@@ -73,20 +73,18 @@ export function useTaskStore(client: TaskClient): TaskStore {
           setTasks(current => upsertTask(current, event.task));
           break;
         case 'task:usage':
-          setTasks(current => current.map(task =>
-            task.id === event.taskId ? { ...task, usage: event.usage } : task
-          ));
+          setTasks(current => current.map(task => (task.id === event.taskId ? { ...task, usage: event.usage } : task)));
           break;
         case 'task:review':
-          setTasks(current => current.map(task =>
-            task.id === event.taskId ? { ...task, reviewState: event.reviewState } : task
-          ));
+          setTasks(current =>
+            current.map(task => (task.id === event.taskId ? { ...task, reviewState: event.reviewState } : task)),
+          );
           break;
         case 'approval:requested':
           setApprovals(current =>
             current.some(approval => approval.id === event.approval.id)
               ? current
-              : [...current, event.approval].sort((a, b) => a.createdAt - b.createdAt)
+              : [...current, event.approval].sort((a, b) => a.createdAt - b.createdAt),
           );
           break;
         case 'approval:resolved':
@@ -106,10 +104,7 @@ export function useTaskStore(client: TaskClient): TaskStore {
 
   const refresh = useCallback(async () => {
     try {
-      const [nextTasks, nextApprovals] = await Promise.all([
-        client.listTasks(),
-        client.listApprovals(),
-      ]);
+      const [nextTasks, nextApprovals] = await Promise.all([client.listTasks(), client.listApprovals()]);
       if (!mountedRef.current) return;
       setTasks(sortTasks(nextTasks));
       setApprovals(nextApprovals);

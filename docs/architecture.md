@@ -127,7 +127,7 @@ one log write and one re-render each.
 | --- | --- |
 | `read_file`, `search_code`, `git_status`, `git_diff` | read |
 | `run_bash` | exec |
-| `write_file`, `replace_string_in_file` | write |
+| `write_file`, `replace_string_in_file`, `replace_all_strings` | write |
 | `git_add`, `git_commit` | write |
 | `spawn_sub_agent` | read-only child agent |
 | `spawn_task`, `wait_for_tasks`, `get_task` | task control |
@@ -156,11 +156,12 @@ The dashboard is split so most behavior can be tested without a terminal:
 ## Conventions
 
 - ESM only, `NodeNext` resolution: relative imports need a `.js` suffix, including from
-  `.tsx`. Tests and scripts are not typechecked; `pnpm build` is the typecheck.
-- New tools need a schema, an implementation, and approval wiring — never call a write
+  `.tsx`. `pnpm typecheck` checks `src/**/*` and `tests/**/*` / `scripts/**/*.ts`.
+- New tools need a schema, an implementation, and approval wiring - never call a write
   operation directly from a tool.
 - Put interaction rules in `src/ui` and keep Ink components thin.
-- Tests use `node:test` through `tsx` and run from the repository root. `tests/*.test.ts`
-  covers the pure UI modules, the task engine, tools, and the dashboard components.
+- Tests use `node:test` through `tsx` and run from the repository root. Unit suites live in
+  `tests/unit/{core,tools,ui}`; integration suites (git, worktrees, task lifecycle, CLI)
+  live in `tests/integration`. See [testing.md](testing.md).
 
 See [../AGENTS.md](../AGENTS.md) for commands, merge rules, and the release process.

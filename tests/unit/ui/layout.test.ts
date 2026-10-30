@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeLayout } from '../src/ui/layout.js';
+import { computeLayout } from '../../../src/ui/layout.js';
 
 describe('UI Layout', () => {
   it('uses a two-pane layout on a wide terminal', () => {

@@ -1,9 +1,9 @@
 node_modules/
 dist/
+coverage/
 .forge/
 .agent-sessions/
 .env
-tests/temp-git-repo/
 KK.md
 # Ignore Forge task engine state
 .agent/

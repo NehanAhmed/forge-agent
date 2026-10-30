@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildLogLines, windowLogLines } from '../src/ui/log-view.js';
-import type { LogEntry } from '../src/core/context.js';
+import { buildLogLines, windowLogLines } from '../../../src/ui/log-view.js';
+import type { LogEntry } from '../../../src/core/context.js';
 
 const base = Date.UTC(2026, 0, 1, 12, 0, 0);
 
@@ -43,12 +43,18 @@ describe('UI Log View', () => {
     );
 
     const tail = windowLogLines(lines, 3, 0);
-    assert.deepEqual(tail.lines.map(line => line.seq), [8, 9, 10]);
+    assert.deepEqual(
+      tail.lines.map(line => line.seq),
+      [8, 9, 10],
+    );
     assert.equal(tail.atBottom, true);
     assert.equal(tail.maxOffset, 7);
 
     const scrolled = windowLogLines(lines, 3, 2);
-    assert.deepEqual(scrolled.lines.map(line => line.seq), [6, 7, 8]);
+    assert.deepEqual(
+      scrolled.lines.map(line => line.seq),
+      [6, 7, 8],
+    );
     assert.equal(scrolled.atBottom, false);
     assert.equal(scrolled.hasNewBelow, true);
 

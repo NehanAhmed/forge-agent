@@ -74,12 +74,17 @@ export function createGlyphs(ascii: boolean): Glyphs {
 
 export function statusColor(status: TaskStatus, theme: Theme): string | undefined {
   switch (status) {
-    case 'running': return theme.success;
-    case 'waiting_approval': return theme.warning;
-    case 'failed': return theme.error;
+    case 'running':
+      return theme.success;
+    case 'waiting_approval':
+      return theme.warning;
+    case 'failed':
+      return theme.error;
     case 'queued':
-    case 'cancelled': return theme.muted;
-    case 'done': return theme.success;
+    case 'cancelled':
+      return theme.muted;
+    case 'done':
+      return theme.success;
   }
 }
 
@@ -88,31 +93,49 @@ export type LogKind = 'reasoning' | 'tool_call' | 'tool_result' | 'assistant' | 
 export function logGlyph(kind: LogKind, ascii: boolean): string {
   if (ascii) {
     switch (kind) {
-      case 'assistant': return '*';
-      case 'reasoning': return '.';
-      case 'tool_call': return '>';
-      case 'tool_result': return '<';
-      case 'info': return 'i';
-      case 'error': return 'x';
+      case 'assistant':
+        return '*';
+      case 'reasoning':
+        return '.';
+      case 'tool_call':
+        return '>';
+      case 'tool_result':
+        return '<';
+      case 'info':
+        return 'i';
+      case 'error':
+        return 'x';
     }
   }
   switch (kind) {
-    case 'assistant': return '◆';
-    case 'reasoning': return '…';
-    case 'tool_call': return '⚡';
-    case 'tool_result': return '↳';
-    case 'info': return 'ℹ';
-    case 'error': return '✗';
+    case 'assistant':
+      return '◆';
+    case 'reasoning':
+      return '…';
+    case 'tool_call':
+      return '⚡';
+    case 'tool_result':
+      return '↳';
+    case 'info':
+      return 'ℹ';
+    case 'error':
+      return '✗';
   }
 }
 
 export function logColor(kind: LogKind, theme: Theme): string | undefined {
   switch (kind) {
-    case 'assistant': return theme.text;
-    case 'reasoning': return theme.muted;
-    case 'tool_call': return theme.warning;
-    case 'tool_result': return theme.muted;
-    case 'info': return theme.info;
-    case 'error': return theme.error;
+    case 'assistant':
+      return theme.text;
+    case 'reasoning':
+      return theme.muted;
+    case 'tool_call':
+      return theme.warning;
+    case 'tool_result':
+      return theme.muted;
+    case 'info':
+      return theme.info;
+    case 'error':
+      return theme.error;
   }
 }

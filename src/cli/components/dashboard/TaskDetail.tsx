@@ -25,12 +25,18 @@ export interface TaskDetailProps {
 
 function reviewLabel(task: Task): string {
   switch (task.reviewState) {
-    case 'pending_review': return 'review ready';
-    case 'merged': return 'merged';
-    case 'discarded': return 'discarded';
-    case 'conflict': return 'conflict';
-    case 'needs_attention': return 'needs attention';
-    case 'none': return '';
+    case 'pending_review':
+      return 'review ready';
+    case 'merged':
+      return 'merged';
+    case 'discarded':
+      return 'discarded';
+    case 'conflict':
+      return 'conflict';
+    case 'needs_attention':
+      return 'needs attention';
+    case 'none':
+      return '';
   }
 }
 
@@ -84,17 +90,17 @@ export function TaskDetail({
     >
       <Box width={width} justifyContent="space-between">
         <Text bold>{truncateCells(title, titleWidth)}</Text>
-        <Text color={task.status === 'failed' ? theme.error : task.status === 'waiting_approval' ? theme.warning : theme.muted}>
+        <Text
+          color={
+            task.status === 'failed' ? theme.error : task.status === 'waiting_approval' ? theme.warning : theme.muted
+          }
+        >
           {statusGlyph} {statusText}
         </Text>
       </Box>
 
       <Box width={width}>
-        <Text
-          dimColor={!task.error}
-          color={task.error ? theme.error : undefined}
-          wrap="truncate"
-        >
+        <Text dimColor={!task.error} color={task.error ? theme.error : undefined} wrap="truncate">
           {truncateCells(secondLine, width)}
         </Text>
       </Box>
@@ -102,7 +108,9 @@ export function TaskDetail({
       <Text dimColor>{glyphs.separator.repeat(Math.max(1, width))}</Text>
 
       {error ? (
-        <Text color={theme.error} wrap="truncate">Could not load log: {truncateCells(error, Math.max(1, width - 20))}</Text>
+        <Text color={theme.error} wrap="truncate">
+          Could not load log: {truncateCells(error, Math.max(1, width - 20))}
+        </Text>
       ) : loading && lines.length === 0 ? (
         <Text dimColor>{ascii ? 'Loading log...' : 'Loading log…'}</Text>
       ) : visibleLines.length === 0 ? (

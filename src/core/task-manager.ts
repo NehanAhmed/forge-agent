@@ -2,8 +2,8 @@ import { EventEmitter } from 'events';
 import { randomBytes } from 'crypto';
 import fs from 'fs';
 import type { Task, TaskStatus, Isolation } from './task.js';
-import { createTask, validateStatusTransition, isValidTransition } from './task.js';
-import { assignDisplayId, descendantsOf, childrenOf, treeSize, enforceSpawnLimits, stricterPolicy } from './tree.js';
+import { createTask, validateStatusTransition } from './task.js';
+import { assignDisplayId, descendantsOf, enforceSpawnLimits, stricterPolicy } from './tree.js';
 import type { ApprovalPolicy, LogEntry, ApprovalRequest, AgentContext, Budget } from './context.js';
 import type { TaskUsage, TaskError } from './task.js';
 import {
@@ -75,7 +75,7 @@ export class TaskManager extends EventEmitter {
   private saveDebounceTimer: NodeJS.Timeout | null = null;
   private readonly LOG_BUFFER_SIZE = 2000;
   private readonly SAVE_DEBOUNCE_MS = 500;
-  
+
   // Queue management
   private queue: string[] = []; // Task IDs waiting to run
   private running = new Set<string>(); // Task IDs currently running
@@ -98,7 +98,15 @@ export class TaskManager extends EventEmitter {
 
   private tasksDir?: string;
 
-  constructor(opts: { concurrency?: number; repoCwd?: string; callModel?: any; tasksDir?: string; treeLimits?: { maxDepth: number; maxChildrenPerTask: number; maxTasksPerTree: number } } = {}) {
+  constructor(
+    opts: {
+      concurrency?: number;
+      repoCwd?: string;
+      callModel?: any;
+      tasksDir?: string;
+      treeLimits?: { maxDepth: number; maxChildrenPerTask: number; maxTasksPerTree: number };
+    } = {},
+  ) {
     super();
     this.concurrency = opts.concurrency ?? 2;
     this.repoCwd = opts.repoCwd ?? process.cwd();
@@ -299,12 +307,7 @@ export class TaskManager extends EventEmitter {
     const displayId = assignDisplayId(allTasks, parentId);
     const treeId = parent.treeId;
 
-    let policy: ApprovalPolicy = parent.policy;
-    if (readOnly) {
-      policy = 'read_only';
-    } else {
-      policy = stricterPolicy(parent.policy, 'ask') as ApprovalPolicy;
-    }
+    const policy: ApprovalPolicy = readOnly ? 'read_only' : (stricterPolicy(parent.policy, 'ask') as ApprovalPolicy);
 
     const id = this.generateTaskId();
     const task = createTask(id, goal, {
@@ -334,7 +337,11 @@ export class TaskManager extends EventEmitter {
     return { id, displayId };
   }
 
-  async waitForChildren(parentId: string, childIds: string[], timeoutMs?: number): Promise<Array<{ id: string; status: TaskStatus; summary?: string; error?: TaskError }>> {
+  async waitForChildren(
+    parentId: string,
+    childIds: string[],
+    timeoutMs?: number,
+  ): Promise<Array<{ id: string; status: TaskStatus; summary?: string; error?: TaskError }>> {
     const parent = this.tasks.get(parentId);
     if (!parent) {
       throw new Error(`Parent task not found: ${parentId}`);
@@ -348,10 +355,11 @@ export class TaskManager extends EventEmitter {
       }
     }
 
-    const allDone = () => childIds.every(cid => {
-      const t = this.tasks.get(cid);
-      return t && (t.status === 'done' || t.status === 'failed' || t.status === 'cancelled');
-    });
+    const allDone = () =>
+      childIds.every(cid => {
+        const t = this.tasks.get(cid);
+        return t && (t.status === 'done' || t.status === 'failed' || t.status === 'cancelled');
+      });
 
     if (allDone()) {
       return childIds.map(cid => {
@@ -365,15 +373,13 @@ export class TaskManager extends EventEmitter {
     this.waitingOnChildren.set(parentId, new Set(childIds));
     this.suspendParent(parentId);
 
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       let settled = false;
-      let interval: NodeJS.Timeout | undefined;
-      let timeoutTimer: NodeJS.Timeout | undefined;
 
       const finish = () => {
         if (settled) return;
         settled = true;
-        if (interval) clearInterval(interval);
+        clearInterval(interval);
         if (timeoutTimer) clearTimeout(timeoutTimer);
         this.waitingOnChildren.delete(parentId);
 
@@ -391,7 +397,7 @@ export class TaskManager extends EventEmitter {
       };
 
       // Polling fallback with a small interval.
-      interval = setInterval(() => {
+      const interval = setInterval(() => {
         const abort = this.abortControllers.get(parentId);
         if (allDone() || this.shuttingDown || abort?.signal.aborted) {
           finish();
@@ -399,11 +405,9 @@ export class TaskManager extends EventEmitter {
       }, 100);
       interval.unref();
 
-      // Timeout handler.
-      if (timeoutMs) {
-        timeoutTimer = setTimeout(finish, timeoutMs);
-        timeoutTimer.unref?.();
-      }
+      // Timeout handler. The closure above only runs after this is initialized.
+      const timeoutTimer = timeoutMs ? setTimeout(finish, timeoutMs) : undefined;
+      timeoutTimer?.unref?.();
     });
   }
 
@@ -426,7 +430,7 @@ export class TaskManager extends EventEmitter {
       return Promise.resolve();
     }
 
-    return new Promise<void>((resolve) => {
+    return new Promise<void>(resolve => {
       this.waitingResolvers.set(parentId, resolve);
       this.queue = this.queue.filter(id => id !== parentId);
       this.queue.unshift(parentId);
@@ -434,7 +438,10 @@ export class TaskManager extends EventEmitter {
     });
   }
 
-  async getDescendant(parentId: string, id: string): Promise<{ id: string; status: TaskStatus; usage: TaskUsage; summary?: string; error?: TaskError } | undefined> {
+  async getDescendant(
+    parentId: string,
+    id: string,
+  ): Promise<{ id: string; status: TaskStatus; usage: TaskUsage; summary?: string; error?: TaskError } | undefined> {
     const parent = this.tasks.get(parentId);
     if (!parent) throw new Error(`Parent task not found: ${parentId}`);
 
@@ -537,8 +544,9 @@ export class TaskManager extends EventEmitter {
       }
 
       // Auto-deny all pending approvals for this task
-      const pendingApprovals = Array.from(this.approvals.entries())
-        .filter(([_, approval]) => approval.taskId === task.id);
+      const pendingApprovals = Array.from(this.approvals.entries()).filter(
+        ([_, approval]) => approval.taskId === task.id,
+      );
 
       for (const [approvalId, approval] of pendingApprovals) {
         approval.resolver(false);
@@ -733,8 +741,8 @@ export class TaskManager extends EventEmitter {
         state: createStateAccessor(task.sessionId, getTaskStateDir(taskId, this.tasksDir)),
         policy: task.policy,
         budget,
-        log: (entry) => this.log(taskId, entry),
-        requestApproval: (req) => this.requestApproval(taskId, req),
+        log: entry => this.log(taskId, entry),
+        requestApproval: req => this.requestApproval(taskId, req),
         callModel: this.customCallModel ?? getClient().callModel.bind(getClient()),
         spawnChild: (goal: string, readOnly?: boolean) => this.spawnChild(taskId, goal, readOnly),
         waitForChildren: (ids: string[], timeoutMs?: number) => this.waitForChildren(taskId, ids, timeoutMs),
@@ -888,9 +896,7 @@ export class TaskManager extends EventEmitter {
     const bySeq = new Map<number, LogEntry>();
     for (const entry of disk) bySeq.set(entry.seq, entry);
     for (const entry of live) bySeq.set(entry.seq, entry);
-    const merged = [...bySeq.values()]
-      .sort((a, b) => a.seq - b.seq)
-      .slice(-this.LOG_BUFFER_SIZE);
+    const merged = [...bySeq.values()].sort((a, b) => a.seq - b.seq).slice(-this.LOG_BUFFER_SIZE);
     this.logs.set(taskId, merged);
     const last = merged[merged.length - 1];
     if (last) {
@@ -965,8 +971,7 @@ export class TaskManager extends EventEmitter {
   }
 
   listApprovals(): Approval[] {
-    return Array.from(this.approvals.values())
-      .sort((a, b) => a.createdAt - b.createdAt);
+    return Array.from(this.approvals.values()).sort((a, b) => a.createdAt - b.createdAt);
   }
 
   requestApproval(taskId: string, req: ApprovalRequest): Promise<boolean> {
@@ -975,7 +980,7 @@ export class TaskManager extends EventEmitter {
       throw new Error(`Task not found: ${taskId}`);
     }
 
-    return new Promise<boolean>((resolve) => {
+    return new Promise<boolean>(resolve => {
       const approval: Approval = {
         id: this.generateApprovalId(),
         taskId,

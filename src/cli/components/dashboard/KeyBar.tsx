@@ -45,7 +45,11 @@ export function KeyBar({ hints, notice, confirm, width, theme, glyphs }: KeyBarP
     );
     label = notice.text;
   } else {
-    content = <Text dimColor wrap="truncate">{truncateCells(hints, width - 2)}</Text>;
+    content = (
+      <Text dimColor wrap="truncate">
+        {truncateCells(hints, width - 2)}
+      </Text>
+    );
     label = hints;
   }
 

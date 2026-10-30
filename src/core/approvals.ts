@@ -1,5 +1,5 @@
 import path from 'path';
-import type { AgentContext, RiskClass, ApprovalRequest } from './context.js';
+import type { AgentContext, RiskClass } from './context.js';
 
 // Shell command allowlist for auto_in_worktree policy
 export const SHELL_ALLOWLIST = [
@@ -39,10 +39,15 @@ export const SHELL_ALLOWLIST = [
   'git show',
 ];
 
+// Prefix matching is only safe for a single command. Reject shell syntax that
+// could chain, redirect, or substitute another command onto an allowlisted one.
+const SHELL_METACHARACTERS = /[;&|<>`$\n\r()]/;
+
 export function isAllowlistedCommand(command: string): boolean {
   const trimmed = command.trim().toLowerCase();
-  return SHELL_ALLOWLIST.some(allowed =>
-    trimmed === allowed.toLowerCase() || trimmed.startsWith(allowed.toLowerCase() + ' ')
+  if (!trimmed || SHELL_METACHARACTERS.test(trimmed)) return false;
+  return SHELL_ALLOWLIST.some(
+    allowed => trimmed === allowed.toLowerCase() || trimmed.startsWith(allowed.toLowerCase() + ' '),
   );
 }
 
@@ -57,7 +62,7 @@ export async function executeWithPolicy(
   risk: RiskClass,
   tool: string,
   args: unknown,
-  execute: () => Promise<unknown> | unknown
+  execute: () => Promise<unknown> | unknown,
 ): Promise<unknown> {
   // Read tools: always allowed
   if (risk === 'read') {

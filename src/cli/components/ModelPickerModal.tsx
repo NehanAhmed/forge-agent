@@ -25,13 +25,7 @@ function getTermDimensions() {
   }
 }
 
-export function ModelPickerModal({
-  isOpen,
-  onClose,
-  onSelect,
-  currentModelId,
-  models,
-}: ModelPickerModalProps) {
+export function ModelPickerModal({ isOpen, onClose, onSelect, currentModelId, models }: ModelPickerModalProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [filter, setFilter] = useState('');
   const isOpenRef = useRef(isOpen);
@@ -48,9 +42,10 @@ export function ModelPickerModal({
   }, []);
 
   const filteredModels = models.filter(
-    m => m.name.toLowerCase().includes(filter.toLowerCase()) ||
-         m.description.toLowerCase().includes(filter.toLowerCase()) ||
-         m.id.toLowerCase().includes(filter.toLowerCase())
+    m =>
+      m.name.toLowerCase().includes(filter.toLowerCase()) ||
+      m.description.toLowerCase().includes(filter.toLowerCase()) ||
+      m.id.toLowerCase().includes(filter.toLowerCase()),
   );
 
   // Reset selection when filter changes
@@ -63,7 +58,10 @@ export function ModelPickerModal({
     setSelectedIndex(prev => Math.min(prev, Math.max(0, filteredModels.length - 1)));
   }, [filteredModels.length]);
 
-  const handleKeyPress = (input: string, key: { upArrow?: boolean; downArrow?: boolean; return?: boolean; escape?: boolean; backspace?: boolean; }) => {
+  const handleKeyPress = (
+    input: string,
+    key: { upArrow?: boolean; downArrow?: boolean; return?: boolean; escape?: boolean; backspace?: boolean },
+  ) => {
     if (!isOpenRef.current) return;
 
     if (key.upArrow) {
@@ -108,9 +106,10 @@ export function ModelPickerModal({
   const modalHeight = Math.min(CHROME_HEIGHT + listHeight, termHeight - 2);
 
   // Scroll logic for long lists
-  const scrollTop = selectedIndex >= Math.floor(listHeight / ITEM_HEIGHT) 
-    ? selectedIndex - Math.floor(listHeight / ITEM_HEIGHT) + 1 
-    : 0;
+  const scrollTop =
+    selectedIndex >= Math.floor(listHeight / ITEM_HEIGHT)
+      ? selectedIndex - Math.floor(listHeight / ITEM_HEIGHT) + 1
+      : 0;
   const visibleModels = filteredModels.slice(scrollTop, scrollTop + Math.ceil(listHeight / ITEM_HEIGHT));
 
   return (
@@ -134,10 +133,13 @@ export function ModelPickerModal({
         backgroundColor="black"
       >
         <Box flexDirection="row" alignItems="center" marginBottom={1}>
-          <Text bold color="cyanBright"> Select Model </Text>
+          <Text bold color="cyanBright">
+            {' '}
+            Select Model{' '}
+          </Text>
           <Text dimColor> (↑/↓ Enter Esc type:filter) </Text>
         </Box>
-        
+
         <Box marginBottom={1} borderStyle="single" borderColor="gray" paddingX={1}>
           <Text>Filter: </Text>
           <Text color="white">{filter}</Text>
@@ -162,15 +164,15 @@ export function ModelPickerModal({
                   paddingY={1}
                   backgroundColor={isSelected ? 'blue' : 'transparent'}
                 >
-                  <Text color={isSelected ? 'white' : isCurrent ? 'green' : 'gray'}>
-                    {isSelected ? '► ' : '  '}
-                  </Text>
-                  <Text
-                    bold={isSelected}
-                    color={isCurrent ? 'green' : isSelected ? 'white' : 'white'}
-                  >
+                  <Text color={isSelected ? 'white' : isCurrent ? 'green' : 'gray'}>{isSelected ? '► ' : '  '}</Text>
+                  <Text bold={isSelected} color={isCurrent ? 'green' : isSelected ? 'white' : 'white'}>
                     {model.name}
-                    {isCurrent && <Text color="green" dimColor> ●</Text>}
+                    {isCurrent && (
+                      <Text color="green" dimColor>
+                        {' '}
+                        ●
+                      </Text>
+                    )}
                   </Text>
                 </Box>
               );
@@ -186,14 +188,21 @@ export function ModelPickerModal({
 
         {filteredModels.length > Math.ceil(listHeight / ITEM_HEIGHT) && (
           <Box marginTop={1} flexDirection="row" justifyContent="space-between" paddingX={1}>
-            <Text dimColor>▲ {scrollTop + 1}-{Math.min(scrollTop + visibleModels.length, filteredModels.length)} of {filteredModels.length}</Text>
-            <Text dimColor>{selectedIndex + 1}/{filteredModels.length}</Text>
+            <Text dimColor>
+              ▲ {scrollTop + 1}-{Math.min(scrollTop + visibleModels.length, filteredModels.length)} of{' '}
+              {filteredModels.length}
+            </Text>
+            <Text dimColor>
+              {selectedIndex + 1}/{filteredModels.length}
+            </Text>
           </Box>
         )}
 
         <Box marginTop={1} flexDirection="row" justifyContent="space-between">
           <Text dimColor>{filteredModels.length} model(s)</Text>
-          <Text dimColor>W:{modalWidth} H:{modalHeight}</Text>
+          <Text dimColor>
+            W:{modalWidth} H:{modalHeight}
+          </Text>
         </Box>
       </Box>
     </Box>

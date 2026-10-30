@@ -11,7 +11,6 @@ export function assignDisplayId(existingTasks: Task[], parentId?: string): strin
   return `${parent?.displayId ?? '0'}.${children.length + 1}`;
 }
 
-
 export function descendantsOf(tasks: Task[], rootId: string): Task[] {
   const result: Task[] = [];
   const queue = [rootId];
@@ -38,7 +37,7 @@ export function enforceSpawnLimits(
   tasks: Task[],
   parent: Task | undefined,
   limits: { maxDepth: number; maxChildrenPerTask: number; maxTasksPerTree: number },
-  depthOfChild: number
+  depthOfChild: number,
 ): { ok: boolean; error?: string } {
   if (depthOfChild > limits.maxDepth) {
     return { ok: false, error: `Cannot spawn: max depth ${limits.maxDepth} reached` };
@@ -46,7 +45,10 @@ export function enforceSpawnLimits(
 
   if (parent) {
     if (childrenOf(tasks, parent.id).length >= limits.maxChildrenPerTask) {
-      return { ok: false, error: `Cannot spawn: this task already has ${limits.maxChildrenPerTask} children (limit ${limits.maxChildrenPerTask})` };
+      return {
+        ok: false,
+        error: `Cannot spawn: this task already has ${limits.maxChildrenPerTask} children (limit ${limits.maxChildrenPerTask})`,
+      };
     }
     if (treeSize(tasks, parent.treeId) >= limits.maxTasksPerTree) {
       return { ok: false, error: `Cannot spawn: tree limit of ${limits.maxTasksPerTree} tasks reached` };
@@ -81,5 +83,3 @@ export function resolveTaskByIdOrDisplay(tasks: Task[], ref: string): Task | und
   const prefixMatches = tasks.filter(t => t.id.startsWith(clean));
   return prefixMatches.length === 1 ? prefixMatches[0] : undefined;
 }
-
-

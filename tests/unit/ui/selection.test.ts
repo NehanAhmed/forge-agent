@@ -9,8 +9,8 @@ import {
   moveSelection,
   nearestVisible,
   pickInitialSelection,
-} from '../src/ui/selection.js';
-import { createTask } from '../src/core/task.js';
+} from '../../../src/ui/selection.js';
+import { createTask } from '../../../src/core/task.js';
 
 function row(id: string, overrides: Partial<ReturnType<typeof createTask>> = {}) {
   return { task: { ...createTask(id, `goal ${id}`), ...overrides } };
@@ -54,9 +54,18 @@ describe('UI Selection', () => {
     const done = row('d', { status: 'done' });
     const all = [active, failed, review, done];
 
-    assert.deepEqual(filterRows(all, 'all').map(r => r.task.id), ['r', 'f', 'v', 'd']);
-    assert.deepEqual(filterRows(all, 'active').map(r => r.task.id), ['r']);
-    assert.deepEqual(filterRows(all, 'attention').map(r => r.task.id), ['f', 'v']);
+    assert.deepEqual(
+      filterRows(all, 'all').map(r => r.task.id),
+      ['r', 'f', 'v', 'd'],
+    );
+    assert.deepEqual(
+      filterRows(all, 'active').map(r => r.task.id),
+      ['r'],
+    );
+    assert.deepEqual(
+      filterRows(all, 'attention').map(r => r.task.id),
+      ['f', 'v'],
+    );
   });
 
   it('falls back to the nearest visible ancestor when a row is hidden', () => {
