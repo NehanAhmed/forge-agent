@@ -49,9 +49,9 @@ describe('task model', () => {
       queued: ['running', 'cancelled'],
       running: ['waiting_approval', 'done', 'failed', 'cancelled'],
       waiting_approval: ['running', 'cancelled'],
-      done: [],
-      failed: [],
-      cancelled: [],
+      done: ['queued'], // follow-up conversations
+      failed: ['queued'], // resume or follow-up
+      cancelled: ['queued'], // follow-up after cancellation
     };
 
     for (const from of ALL_STATUSES) {

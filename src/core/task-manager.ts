@@ -99,6 +99,7 @@ export class TaskManager extends EventEmitter {
   private suspended = new Set<string>(); // parents waiting on children (subset of running)
 
   private tasksDir?: string;
+  private pendingFollowUps = new Map<string, string>(); // taskId → follow-up message
 
   constructor(
     opts: {
@@ -531,6 +532,52 @@ export class TaskManager extends EventEmitter {
     return task;
   }
 
+  /**
+   * Queue a follow-up message on a terminal task. The task re-queues and the
+   * agent resumes from its persisted conversation state, so the model sees the
+   * full prior context plus the new message.
+   */
+  sendFollowUp(id: string, message: string): Task {
+    const task = this.tasks.get(id);
+    if (!task) {
+      throw new Error(`Task not found: ${id}`);
+    }
+
+    const trimmed = message.trim();
+    if (!trimmed) {
+      throw new Error('Follow-up message must not be empty.');
+    }
+
+    if (task.status !== 'done' && task.status !== 'failed' && task.status !== 'cancelled') {
+      throw new Error(
+        `Cannot send follow-up to #${task.displayId}: status is ${task.status}. Only finished tasks accept follow-ups.`,
+      );
+    }
+
+    // If a worktree was removed (e.g. "No changes made"), let runTask create a
+    // fresh one. If it still exists, reuse it.
+    if (task.worktree && !fs.existsSync(task.worktree.path)) {
+      task.worktree = undefined;
+    }
+
+    // Store the follow-up message; runTask will consume it as the new goal.
+    this.pendingFollowUps.set(id, trimmed);
+
+    // Reset the task to a re-runnable state.
+    task.status = 'queued';
+    task.error = undefined;
+    task.resumable = false;
+    task.finishedAt = undefined;
+
+    this.queue.push(id);
+    this.scheduleSave();
+    this.emit('task:status', { taskId: id, oldStatus: task.status, newStatus: 'queued', task });
+
+    this.processQueue();
+
+    return task;
+  }
+
   async cancel(id: string): Promise<void> {
     const rootTask = this.tasks.get(id);
     if (!rootTask) {
@@ -695,29 +742,48 @@ export class TaskManager extends EventEmitter {
       // Update status to running
       this.updateStatus(taskId, 'running');
 
-      // Set up worktree isolation if requested
+      // Consume any pending follow-up message and use it as the run goal.
+      // The StateAccessor (keyed by task.sessionId) loads the prior conversation,
+      // so the model sees the full history plus this new message.
+      const followUpMessage = this.pendingFollowUps.get(taskId);
+      if (followUpMessage) {
+        this.pendingFollowUps.delete(taskId);
+        this.log(taskId, { type: 'user', content: followUpMessage });
+      }
+      const goal = followUpMessage ?? task.goal;
+
+      // Set up worktree isolation if requested. Reuse an existing worktree when
+      // its directory is still on disk; only create a new one when none exists.
       if (task.isolation === 'worktree') {
-        try {
-          const worktreeInfo = createWorktree(taskId, task.goal, this.repoCwd);
-          task.worktree = worktreeInfo;
-          task.cwd = worktreeInfo.path;
-          this.scheduleSave();
+        if (task.worktree && fs.existsSync(task.worktree.path)) {
+          task.cwd = task.worktree.path;
           this.log(taskId, {
             type: 'info',
-            content: `Created worktree at ${worktreeInfo.path} on branch ${worktreeInfo.branch}`,
+            content: `Reusing existing worktree at ${task.worktree.path} on branch ${task.worktree.branch}`,
           });
-        } catch (err: any) {
-          // Fall back to shared isolation
-          task.isolation = 'shared';
-          if (task.policy === 'auto_in_worktree') {
-            task.policy = 'ask';
+        } else {
+          try {
+            const worktreeInfo = createWorktree(taskId, goal, this.repoCwd);
+            task.worktree = worktreeInfo;
+            task.cwd = worktreeInfo.path;
+            this.scheduleSave();
+            this.log(taskId, {
+              type: 'info',
+              content: `Created worktree at ${worktreeInfo.path} on branch ${worktreeInfo.branch}`,
+            });
+          } catch (err: any) {
+            // Fall back to shared isolation
+            task.isolation = 'shared';
+            if (task.policy === 'auto_in_worktree') {
+              task.policy = 'ask';
+            }
+            task.statusDetail = `Worktree creation failed, using shared isolation: ${err.message}`;
+            this.log(taskId, {
+              type: 'info',
+              content: `Worktree creation failed, falling back to shared: ${err.message}`,
+            });
+            this.scheduleSave();
           }
-          task.statusDetail = `Worktree creation failed, using shared isolation: ${err.message}`;
-          this.log(taskId, {
-            type: 'info',
-            content: `Worktree creation failed, falling back to shared: ${err.message}`,
-          });
-          this.scheduleSave();
         }
       }
 
@@ -752,7 +818,7 @@ export class TaskManager extends EventEmitter {
       };
 
       // Run the agent headlessly
-      const result = await runAgentHeadless(task.goal, ctx, {
+      const result = await runAgentHeadless(goal, ctx, {
         maxSteps: 50,
       });
 
@@ -1067,6 +1133,11 @@ export class TaskManager extends EventEmitter {
     this.emit('task:review', { taskId: id, reviewState: 'discarded' });
   }
 
+  /**
+   * Recursively remove a task and all its descendants. When `force` is true,
+   * running/queued tasks are cancelled first, children are deleted depth-first,
+   * and worktree cleanup failures are suppressed.
+   */
   async delete(id: string, force = false): Promise<void> {
     const task = this.tasks.get(id);
     if (!task) throw new Error(`Task not found: ${id}`);
@@ -1074,18 +1145,42 @@ export class TaskManager extends EventEmitter {
       throw new Error(`Cannot delete active task #${task.displayId}. Cancel it first.`);
     }
 
-    // Cancel if running
+    // Cancel if still active
     if (task.status === 'running' || task.status === 'waiting_approval' || task.status === 'queued') {
       await this.cancel(id);
     }
 
-    // Recursively delete children? Or just error? Let's check for children.
-    const children = descendantsOf(Array.from(this.tasks.values()), id);
-    if (children.length > 0 && !force) {
-      throw new Error(`Task #${task.displayId} has ${children.length} children. Delete them first or use force.`);
+    // When force is true, recursively delete all descendants depth-first so
+    // children are gone before the parent.
+    if (force) {
+      const children = descendantsOf(Array.from(this.tasks.values()), id);
+      // Process deepest descendants first (reverse order of creation ≈ deepest).
+      for (const child of [...children].reverse()) {
+        if (this.tasks.has(child.id)) {
+          await this._removeSingleTask(child.id, force);
+        }
+      }
+    } else {
+      const children = descendantsOf(Array.from(this.tasks.values()), id);
+      if (children.length > 0) {
+        throw new Error(`Task #${task.displayId} has ${children.length} children. Delete them first or use force.`);
+      }
     }
 
-    // Remove worktree if exists
+    await this._removeSingleTask(id, force);
+  }
+
+  /** Internal helper: remove a single task from memory, disk, and emit event. */
+  private async _removeSingleTask(id: string, force: boolean): Promise<void> {
+    const task = this.tasks.get(id);
+    if (!task) return; // Already removed by a recursive call
+
+    // Cancel if somehow still active
+    if (task.status === 'running' || task.status === 'waiting_approval' || task.status === 'queued') {
+      await this.cancel(id);
+    }
+
+    // Remove worktree
     if (task.worktree) {
       try {
         removeWorktree(task.worktree, this.repoCwd, force);
@@ -1096,6 +1191,9 @@ export class TaskManager extends EventEmitter {
 
     // Remove from memory
     this.tasks.delete(id);
+
+    // Remove any pending follow-up
+    this.pendingFollowUps.delete(id);
 
     // Remove approvals
     for (const [approvalId, approval] of this.approvals.entries()) {
@@ -1110,7 +1208,6 @@ export class TaskManager extends EventEmitter {
     this.scheduleSave();
     this.emit('task:deleted', { taskId: id });
   }
-
 
   async shutdown(opts?: { graceMs?: number }): Promise<void> {
     this.shuttingDown = true;

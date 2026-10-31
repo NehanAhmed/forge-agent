@@ -88,7 +88,7 @@ export function statusColor(status: TaskStatus, theme: Theme): string | undefine
   }
 }
 
-export type LogKind = 'reasoning' | 'tool_call' | 'tool_result' | 'assistant' | 'info' | 'error';
+export type LogKind = 'reasoning' | 'tool_call' | 'tool_result' | 'assistant' | 'info' | 'error' | 'user';
 
 export function logGlyph(kind: LogKind, ascii: boolean): string {
   if (ascii) {
@@ -105,6 +105,8 @@ export function logGlyph(kind: LogKind, ascii: boolean): string {
         return 'i';
       case 'error':
         return 'x';
+      case 'user':
+        return '❯';
     }
   }
   switch (kind) {
@@ -120,6 +122,8 @@ export function logGlyph(kind: LogKind, ascii: boolean): string {
       return 'ℹ';
     case 'error':
       return '✗';
+    case 'user':
+      return '❯';
   }
 }
 
@@ -137,5 +141,7 @@ export function logColor(kind: LogKind, theme: Theme): string | undefined {
       return theme.info;
     case 'error':
       return theme.error;
+    case 'user':
+      return theme.accent;
   }
 }

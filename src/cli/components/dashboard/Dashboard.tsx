@@ -121,6 +121,8 @@ export function Dashboard({ client }: DashboardProps) {
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [resolving, setResolving] = useState<Set<string>>(() => new Set());
+  const [followUpTaskId, setFollowUpTaskId] = useState<string | null>(null);
+  const [followUpInput, setFollowUpInput] = useState('');
 
   const treeRows = useMemo(() => getVisibleRows(buildTree(tasks), collapsed), [tasks, collapsed]);
   const filteredRows = useMemo(() => filterRows(treeRows, filter), [treeRows, filter]);
@@ -523,6 +525,40 @@ export function Dashboard({ client }: DashboardProps) {
     }
   }
 
+  function requestFollowUp(task: Task) {
+    if (isActiveTask(task)) {
+      notify('error', 'Cannot follow up on an active task.');
+      return;
+    }
+    setFollowUpTaskId(task.id);
+    setFollowUpInput('');
+    setFocus('detail');
+  }
+
+  async function submitFollowUp(value: string) {
+    const message = value.trim();
+    if (!message || !followUpTaskId) return;
+
+    setBusy(true);
+    try {
+      await client.sendFollowUp(followUpTaskId, message);
+      setFollowUpTaskId(null);
+      setFollowUpInput('');
+      setFocus('detail');
+      notify('info', 'Follow-up submitted');
+    } catch (error: unknown) {
+      notify('error', errorText(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function exitFollowUp() {
+    setFollowUpTaskId(null);
+    setFollowUpInput('');
+    setFocus('list');
+  }
+
   async function submit(value: string) {
     const command = value.trim();
     if (!command || busy) return;
@@ -658,8 +694,27 @@ export function Dashboard({ client }: DashboardProps) {
         break;
       }
       case 'openDetail':
-        if (selectedTask) setFocus('detail');
+        if (selectedTask) {
+          // If the task is in a terminal state, automatically enter follow-up
+          // mode so the user can continue the conversation right away.
+          if (selectedTask.status === 'done' || selectedTask.status === 'failed' || selectedTask.status === 'cancelled') {
+            requestFollowUp(selectedTask);
+          } else {
+            setFocus('detail');
+          }
+        } else {
+          notify('error', 'Select a task first.');
+        }
+        break;
+      case 'enterFollowUp':
+        if (selectedTask) requestFollowUp(selectedTask);
         else notify('error', 'Select a task first.');
+        break;
+      case 'exitFollowUp':
+        exitFollowUp();
+        break;
+      case 'submitFollowUp':
+        void submitFollowUp(followUpInput);
         break;
       case 'fold':
         collapseSelected(action.expand);
@@ -798,6 +853,7 @@ export function Dashboard({ client }: DashboardProps) {
       focus,
       overlay: overlay?.kind ?? null,
       confirmingAll: overlay?.kind === 'approvals' && overlay.confirmingAll,
+      followUpMode: followUpTaskId !== null,
     });
     handleAction(action);
   });
@@ -945,6 +1001,10 @@ export function Dashboard({ client }: DashboardProps) {
                     glyphs={glyphs}
                     ascii={ascii}
                     now={now}
+                    followUpMode={followUpTaskId === selectedTask.id}
+                    followUpValue={followUpInput}
+                    onFollowUpChange={setFollowUpInput}
+                    onFollowUpSubmit={value => void submitFollowUp(value)}
                   />
                 ) : (
                   <Text dimColor>Select a task to see its log.</Text>
@@ -955,7 +1015,7 @@ export function Dashboard({ client }: DashboardProps) {
         )}
       </Box>
 
-      {layout.inputHeight > 0 && (
+      {layout.inputHeight > 0 && !followUpTaskId && (
         <InputBar
           value={input}
           onChange={value => setInput(value.slice(0, 4000))}

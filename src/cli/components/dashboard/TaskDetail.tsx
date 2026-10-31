@@ -7,6 +7,7 @@ import { logColor } from '../../../ui/theme.js';
 import { getStatusGlyph } from '../../../ui/status-glyphs.js';
 import { cellWidth, truncateCells } from '../../../ui/text.js';
 import { formatCost, formatDuration, statusLabel, taskElapsed } from '../../../ui/format.js';
+import { InputBar } from './InputBar.js';
 
 export interface TaskDetailProps {
   task: Task;
@@ -21,6 +22,10 @@ export interface TaskDetailProps {
   glyphs: Glyphs;
   ascii: boolean;
   now: number;
+  followUpMode?: boolean;
+  followUpValue?: string;
+  onFollowUpChange?: (value: string) => void;
+  onFollowUpSubmit?: (value: string) => void;
 }
 
 function reviewLabel(task: Task): string {
@@ -53,6 +58,10 @@ export function TaskDetail({
   glyphs,
   ascii,
   now,
+  followUpMode,
+  followUpValue,
+  onFollowUpChange,
+  onFollowUpSubmit,
 }: TaskDetailProps) {
   const statusGlyph = getStatusGlyph(task.status, ascii);
   const statusText = statusLabel(task.status);
@@ -77,7 +86,7 @@ export function TaskDetail({
 
   const titleWidth = Math.max(10, width - cellWidth(statusText) - 4);
   const title = `#${task.displayId} ${task.goal}`;
-  const logHeight = Math.max(1, height - 3);
+  const logHeight = Math.max(1, height - (followUpMode ? 4 : 3));
   const visibleLines = lines.slice(-logHeight);
 
   return (
@@ -127,6 +136,21 @@ export function TaskDetail({
             </Box>
           );
         })
+      )}
+
+      {followUpMode && onFollowUpChange && onFollowUpSubmit && (
+        <Box marginTop={1} width={width}>
+          <InputBar
+            value={followUpValue ?? ''}
+            onChange={onFollowUpChange}
+            onSubmit={onFollowUpSubmit}
+            focus={true}
+            theme={theme}
+            glyphs={glyphs}
+            placeholder="Type a follow-up message (Esc to back)..."
+            compact={true}
+          />
+        </Box>
       )}
     </Box>
   );

@@ -23,12 +23,23 @@ function normalizePath(target: string): string {
 }
 
 function samePath(a: string, b: string): boolean {
-  const ra = path.resolve(a);
-  const rb = path.resolve(b);
+  // Use fs.realpathSync on both sides to resolve 8.3 short names and symlinks.
+  // This is critical on Windows CI where os.homedir() may return RUNNER~1 while
+  // git reports the full long path. path.resolve alone cannot normalize these.
+  let ra: string;
+  let rb: string;
+  try {
+    ra = fs.realpathSync(a);
+  } catch {
+    ra = path.resolve(a);
+  }
+  try {
+    rb = fs.realpathSync(b);
+  } catch {
+    rb = path.resolve(b);
+  }
   if (process.platform !== 'win32') return ra === rb;
-  // Windows filesystems are case-insensitive; compare case-insensitively so a
-  // worktree created under C:\Users\runneradmin is still recognized when git
-  // reports it as C:\Users\RunnerAdmin.
+  // Windows filesystems are case-insensitive.
   return ra.toLowerCase() === rb.toLowerCase();
 }
 

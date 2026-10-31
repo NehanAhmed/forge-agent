@@ -185,4 +185,3 @@ export function deleteTaskStorage(taskId: string, tasksDir?: string): void {
     // ignore
   }
 }
-

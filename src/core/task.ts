@@ -52,9 +52,9 @@ const ALLOWED_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   queued: ['running', 'cancelled'],
   running: ['waiting_approval', 'done', 'failed', 'cancelled'],
   waiting_approval: ['running', 'cancelled'],
-  done: [],
-  failed: [], // Can transition to 'queued' via resume
-  cancelled: [],
+  done: ['queued'], // Re-queue for follow-up conversation
+  failed: ['queued'], // Re-queue via resume or follow-up
+  cancelled: ['queued'], // Re-queue for follow-up
 };
 
 export function isValidTransition(from: TaskStatus, to: TaskStatus): boolean {

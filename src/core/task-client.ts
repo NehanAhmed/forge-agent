@@ -24,6 +24,7 @@ export interface TaskClient {
     goal: string,
     opts?: { readOnly?: boolean; isolation?: 'worktree' | 'shared'; policy?: ApprovalPolicy },
   ): Promise<Task>;
+  sendFollowUp(id: string, message: string): Promise<Task>;
   listTasks(): Promise<Task[]>;
   getTask(id: string): Promise<Task | undefined>;
   getLog(id: string, opts?: { fromSeq?: number; limit?: number }): Promise<LogEntry[]>;
@@ -108,6 +109,10 @@ export class InProcessTaskClient implements TaskClient {
 
   async discardTask(id: string, opts?: { force?: boolean }): Promise<void> {
     return this.manager.discard(id, opts?.force);
+  }
+
+  async sendFollowUp(id: string, message: string): Promise<Task> {
+    return this.manager.sendFollowUp(id, message);
   }
 
   async deleteTask(id: string, opts?: { force?: boolean }): Promise<void> {
