@@ -58,7 +58,8 @@ export type TaskEvent =
   | 'task:usage'
   | 'approval:requested'
   | 'approval:resolved'
-  | 'task:review';
+  | 'task:review'
+  | 'task:deleted';
 
 const TREE_BUDGET_LIMITS = {
   maxRequests: 60,
@@ -1107,7 +1108,7 @@ export class TaskManager extends EventEmitter {
     // Clean up storage
     deleteTaskStorage(id, this.tasksDir);
     this.scheduleSave();
-    // No specific event for deletion, assuming UI will react to updated tasks list.
+    this.emit('task:deleted', { taskId: id });
   }
 
 

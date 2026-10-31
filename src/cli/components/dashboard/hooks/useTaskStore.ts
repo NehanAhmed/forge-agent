@@ -80,6 +80,9 @@ export function useTaskStore(client: TaskClient): TaskStore {
             current.map(task => (task.id === event.taskId ? { ...task, reviewState: event.reviewState } : task)),
           );
           break;
+        case 'task:deleted':
+          setTasks(current => current.filter(task => task.id !== event.taskId));
+          break;
         case 'approval:requested':
           setApprovals(current =>
             current.some(approval => approval.id === event.approval.id)
