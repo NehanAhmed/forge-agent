@@ -47,6 +47,10 @@ describe('in-process task client', () => {
     await client.cancelTask(task.id);
     assert.equal((await client.getTask(task.id))?.status, 'cancelled');
 
+    await client.deleteTask(task.id);
+    assert.equal(await client.getTask(task.id), undefined);
+    assert.deepEqual(await client.listTasks(), []);
+
     await manager.shutdown({ graceMs: 0 });
   });
 });

@@ -121,6 +121,8 @@ export function Dashboard({ client }: DashboardProps) {
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [resolving, setResolving] = useState<Set<string>>(() => new Set());
+  const [followUpTaskId, setFollowUpTaskId] = useState<string | null>(null);
+  const [followUpInput, setFollowUpInput] = useState('');
 
   const treeRows = useMemo(() => getVisibleRows(buildTree(tasks), collapsed), [tasks, collapsed]);
   const filteredRows = useMemo(() => filterRows(treeRows, filter), [treeRows, filter]);
@@ -339,12 +341,32 @@ export function Dashboard({ client }: DashboardProps) {
       return;
     }
     openConfirm(
-      'Discard',
+      'Discard Worktree',
       `#${task.displayId} ${task.goal}`,
       `deletes ${task.worktree.branch} and its worktree (cannot be undone)`,
       async () => {
         await client.discardTask(task.id);
-        notify('info', `Discarded #${task.displayId}`);
+        notify('info', `Discarded worktree for #${task.displayId}`);
+      },
+    );
+  }
+
+  function requestDelete(task: Task) {
+    if (isActiveTask(task)) {
+      notify('error', `#${task.displayId} is active. Cancel it before deleting.`);
+      return;
+    }
+    const row = treeRows.find(item => item.task.id === task.id);
+    const descendants = row?.descendantCount ?? 0;
+    openConfirm(
+      'Delete Task',
+      `#${task.displayId} ${task.goal}`,
+      descendants > 0
+        ? `permanently deletes this task, its logs, worktree, and ${descendants} child task(s)`
+        : 'permanently deletes this task, logs, and worktree',
+      async () => {
+        await client.deleteTask(task.id, { force: true });
+        notify('info', `Deleted #${task.displayId}`);
       },
     );
   }
@@ -503,6 +525,40 @@ export function Dashboard({ client }: DashboardProps) {
     }
   }
 
+  function requestFollowUp(task: Task) {
+    if (isActiveTask(task)) {
+      notify('error', 'Cannot follow up on an active task.');
+      return;
+    }
+    setFollowUpTaskId(task.id);
+    setFollowUpInput('');
+    setFocus('detail');
+  }
+
+  async function submitFollowUp(value: string) {
+    const message = value.trim();
+    if (!message || !followUpTaskId) return;
+
+    setBusy(true);
+    try {
+      await client.sendFollowUp(followUpTaskId, message);
+      setFollowUpTaskId(null);
+      setFollowUpInput('');
+      setFocus('detail');
+      notify('info', 'Follow-up submitted');
+    } catch (error: unknown) {
+      notify('error', errorText(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function exitFollowUp() {
+    setFollowUpTaskId(null);
+    setFollowUpInput('');
+    setFocus('list');
+  }
+
   async function submit(value: string) {
     const command = value.trim();
     if (!command || busy) return;
@@ -572,6 +628,9 @@ export function Dashboard({ client }: DashboardProps) {
         case 'discard':
           requestDiscard(requireTask(parsed.target));
           break;
+        case 'delete':
+          requestDelete(requireTask(parsed.target));
+          break;
         case 'collapse':
         case 'expand': {
           const task = requireTask(parsed.target);
@@ -635,8 +694,27 @@ export function Dashboard({ client }: DashboardProps) {
         break;
       }
       case 'openDetail':
-        if (selectedTask) setFocus('detail');
+        if (selectedTask) {
+          // If the task is in a terminal state, automatically enter follow-up
+          // mode so the user can continue the conversation right away.
+          if (selectedTask.status === 'done' || selectedTask.status === 'failed' || selectedTask.status === 'cancelled') {
+            requestFollowUp(selectedTask);
+          } else {
+            setFocus('detail');
+          }
+        } else {
+          notify('error', 'Select a task first.');
+        }
+        break;
+      case 'enterFollowUp':
+        if (selectedTask) requestFollowUp(selectedTask);
         else notify('error', 'Select a task first.');
+        break;
+      case 'exitFollowUp':
+        exitFollowUp();
+        break;
+      case 'submitFollowUp':
+        void submitFollowUp(followUpInput);
         break;
       case 'fold':
         collapseSelected(action.expand);
@@ -659,6 +737,10 @@ export function Dashboard({ client }: DashboardProps) {
         break;
       case 'discardTask':
         if (selectedTask) requestDiscard(selectedTask);
+        else notify('error', 'Select a task first.');
+        break;
+      case 'deleteTask':
+        if (selectedTask) requestDelete(selectedTask);
         else notify('error', 'Select a task first.');
         break;
       case 'diffTask':
@@ -771,6 +853,7 @@ export function Dashboard({ client }: DashboardProps) {
       focus,
       overlay: overlay?.kind ?? null,
       confirmingAll: overlay?.kind === 'approvals' && overlay.confirmingAll,
+      followUpMode: followUpTaskId !== null,
     });
     handleAction(action);
   });
@@ -829,7 +912,7 @@ export function Dashboard({ client }: DashboardProps) {
     : focus === 'input'
       ? `enter run${dot}/ commands${dot}tab list${dot}esc list`
       : focus === 'list'
-        ? `${nav} select${dot}${lr} fold${dot}enter open${dot}a approvals${dot}? help`
+        ? `${nav} select${dot}${lr} fold${dot}enter open${dot}d del${dot}x discard${dot}m merge${dot}c cancel${dot}a approvals${dot}? help`
         : `${nav} scroll${dot}f follow${dot}v verbose${dot}esc back`;
 
   return (
@@ -918,6 +1001,10 @@ export function Dashboard({ client }: DashboardProps) {
                     glyphs={glyphs}
                     ascii={ascii}
                     now={now}
+                    followUpMode={followUpTaskId === selectedTask.id}
+                    followUpValue={followUpInput}
+                    onFollowUpChange={setFollowUpInput}
+                    onFollowUpSubmit={value => void submitFollowUp(value)}
                   />
                 ) : (
                   <Text dimColor>Select a task to see its log.</Text>
@@ -928,7 +1015,7 @@ export function Dashboard({ client }: DashboardProps) {
         )}
       </Box>
 
-      {layout.inputHeight > 0 && (
+      {layout.inputHeight > 0 && !followUpTaskId && (
         <InputBar
           value={input}
           onChange={value => setInput(value.slice(0, 4000))}

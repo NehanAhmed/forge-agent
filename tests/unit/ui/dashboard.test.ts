@@ -73,6 +73,19 @@ class MockClient implements TaskClient {
     return { success: true };
   }
   async discardTask(): Promise<void> {}
+  async sendFollowUp(id: string, _message: string): Promise<Task> {
+    const task = this.tasks.find(t => t.id === id);
+    if (!task) throw new Error(`Task not found: ${id}`);
+    return task;
+  }
+  async deleteTask(id: string, _opts?: { force?: boolean }): Promise<void> {
+    // Mock: remove task from list and emit event
+    const index = this.tasks.findIndex(t => t.id === id);
+    if (index !== -1) {
+      this.tasks.splice(index, 1);
+      this.handlers.forEach(handler => handler({ type: 'task:deleted', taskId: id } as TaskEvent));
+    }
+  }
 
   subscribe(handler: (event: TaskEvent) => void): () => void {
     this.handlers.add(handler);

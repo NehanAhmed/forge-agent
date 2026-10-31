@@ -26,6 +26,8 @@ export interface KeyContext {
   overlay: OverlayKind | null;
   /** True while the approvals overlay is asking for approve-all confirmation. */
   confirmingAll?: boolean;
+  /** True while the user is typing a follow-up conversation inside the detail view. */
+  followUpMode?: boolean;
 }
 
 export type DashboardAction =
@@ -38,12 +40,16 @@ export type DashboardAction =
   | { type: 'moveSelection'; delta: number }
   | { type: 'edgeSelection'; edge: 'first' | 'last' }
   | { type: 'openDetail' }
+  | { type: 'enterFollowUp' }
+  | { type: 'exitFollowUp' }
+  | { type: 'submitFollowUp' }
   | { type: 'fold'; expand: boolean }
   | { type: 'openApprovals' }
   | { type: 'cancelTask' }
   | { type: 'resumeTask' }
   | { type: 'mergeTask' }
   | { type: 'discardTask' }
+  | { type: 'deleteTask' }
   | { type: 'diffTask' }
   | { type: 'cycleFilter' }
   | { type: 'focusInput'; seed?: string }
@@ -97,7 +103,7 @@ export function resolveAction(input: string, key: KeyLike, context: KeyContext):
   }
 
   if (context.focus === 'detail') {
-    return resolveDetailAction(input, key);
+    return resolveDetailAction(input, key, context.followUpMode === true);
   }
 
   // Up/Down move the list from both the list and the input. This is deliberate:
@@ -135,6 +141,7 @@ export function resolveAction(input: string, key: KeyLike, context: KeyContext):
   if (input === 'r') return { type: 'resumeTask' };
   if (input === 'm') return { type: 'mergeTask' };
   if (input === 'x') return { type: 'discardTask' };
+  if (input === 'd' || key.delete) return { type: 'deleteTask' };
   if (input === 'D' || (input === 'd' && key.shift)) return { type: 'diffTask' };
   if (input === 's') return { type: 'cycleFilter' };
   if (input === 'f') return { type: 'toggleFollow' };
@@ -144,7 +151,12 @@ export function resolveAction(input: string, key: KeyLike, context: KeyContext):
   return NONE;
 }
 
-function resolveDetailAction(input: string, key: KeyLike): DashboardAction {
+function resolveDetailAction(input: string, key: KeyLike, followUpMode: boolean): DashboardAction {
+  if (followUpMode) {
+    if (key.escape) return { type: 'exitFollowUp' };
+    if (key.return) return { type: 'submitFollowUp' };
+    return NONE;
+  }
   if (key.upArrow || input === 'k') return { type: 'scroll', delta: -1 };
   if (key.downArrow || input === 'j') return { type: 'scroll', delta: 1 };
   if (key.pageUp) return { type: 'scroll', delta: -1, page: true };
@@ -153,6 +165,7 @@ function resolveDetailAction(input: string, key: KeyLike): DashboardAction {
   if (key.end || input === 'G') return { type: 'scrollEdge', edge: 'last' };
   if (input === 'f') return { type: 'toggleFollow' };
   if (input === 'v') return { type: 'toggleVerbose' };
+  if (key.return) return { type: 'enterFollowUp' };
   return NONE;
 }
 

@@ -165,3 +165,23 @@ export function ensureTaskDir(taskId: string, tasksDir?: string): string {
 export function getTaskStateDir(taskId: string, tasksDir?: string): string {
   return ensureTaskDir(taskId, tasksDir);
 }
+
+export function deleteTaskStorage(taskId: string, tasksDir?: string): void {
+  const dir = tasksDir ?? DEFAULT_TASKS_DIR;
+  const logPath = getTaskLogPath(taskId, dir);
+  try {
+    if (fs.existsSync(logPath)) {
+      fs.unlinkSync(logPath);
+    }
+  } catch {
+    // ignore
+  }
+  const taskDir = getTaskDir(taskId, dir);
+  try {
+    if (fs.existsSync(taskDir)) {
+      fs.rmSync(taskDir, { recursive: true, force: true });
+    }
+  } catch {
+    // ignore
+  }
+}

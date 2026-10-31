@@ -80,6 +80,21 @@ export function useTaskStore(client: TaskClient): TaskStore {
             current.map(task => (task.id === event.taskId ? { ...task, reviewState: event.reviewState } : task)),
           );
           break;
+        case 'task:deleted':
+          // Clean up any orphaned child tasks that may have been missed.
+          setTasks(current => {
+            const toDelete = new Set<string>();
+            const findDescendants = (parentId: string) => {
+              const children = current.filter(t => t.parentId === parentId);
+              for (const child of children) {
+                toDelete.add(child.id);
+                findDescendants(child.id);
+              }
+            };
+            findDescendants(event.taskId);
+            return current.filter(task => !toDelete.has(task.id));
+          });
+          break;
         case 'approval:requested':
           setApprovals(current =>
             current.some(approval => approval.id === event.approval.id)
