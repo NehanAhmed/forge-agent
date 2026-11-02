@@ -11,12 +11,14 @@ export interface InputBarProps {
   theme: Theme;
   glyphs: Glyphs;
   placeholder?: string;
+  compact?: boolean;
 }
 
-export function InputBar({ value, onChange, onSubmit, focus, theme, glyphs, placeholder }: InputBarProps) {
+export function InputBar({ value, onChange, onSubmit, focus, theme, glyphs, placeholder, compact }: InputBarProps) {
   return (
-    <Box width="100%" height={1} paddingX={1} overflow="hidden" aria-label="Task input">
-      <Text bold color={focus ? theme.focus : theme.muted}>{`${glyphs.selected} `}</Text>
+    <Box width="100%" height={1} paddingX={compact ? 0 : 1} overflow="hidden" aria-label="Task input">
+      {!compact && <Text bold color={focus ? theme.focus : theme.muted}>{`${glyphs.selected} `}</Text>}
+      {compact && <Text bold color={focus ? theme.focus : theme.muted}>{`❯ `}</Text>}
       <TextInput
         value={value}
         onChange={onChange}

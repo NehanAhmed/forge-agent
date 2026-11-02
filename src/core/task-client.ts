@@ -12,6 +12,7 @@ export interface TaskEventMap {
   'approval:requested': { approvalId: string; taskId: string; approval: Approval };
   'approval:resolved': { approvalId: string; taskId: string; decision: 'approve' | 'deny' };
   'task:review': { taskId: string; reviewState: ReviewState };
+  'task:deleted': { taskId: string };
 }
 
 export type TaskEvent = {
@@ -23,6 +24,7 @@ export interface TaskClient {
     goal: string,
     opts?: { readOnly?: boolean; isolation?: 'worktree' | 'shared'; policy?: ApprovalPolicy },
   ): Promise<Task>;
+  sendFollowUp(id: string, message: string): Promise<Task>;
   listTasks(): Promise<Task[]>;
   getTask(id: string): Promise<Task | undefined>;
   getLog(id: string, opts?: { fromSeq?: number; limit?: number }): Promise<LogEntry[]>;
@@ -33,6 +35,7 @@ export interface TaskClient {
   getDiff(id: string): Promise<TaskDiff>;
   mergeTask(id: string): Promise<MergeResult>;
   discardTask(id: string, opts?: { force?: boolean }): Promise<void>;
+  deleteTask(id: string, opts?: { force?: boolean }): Promise<void>;
   subscribe(handler: (event: TaskEvent) => void): () => void;
 }
 
@@ -51,6 +54,7 @@ export class InProcessTaskClient implements TaskClient {
     this.manager.on('approval:requested', data => this.emit('approval:requested', data));
     this.manager.on('approval:resolved', data => this.emit('approval:resolved', data));
     this.manager.on('task:review', data => this.emit('task:review', data));
+    this.manager.on('task:deleted', data => this.emit('task:deleted', data));
   }
 
   private emit<K extends keyof TaskEventMap>(type: K, data: TaskEventMap[K]): void {
@@ -105,6 +109,14 @@ export class InProcessTaskClient implements TaskClient {
 
   async discardTask(id: string, opts?: { force?: boolean }): Promise<void> {
     return this.manager.discard(id, opts?.force);
+  }
+
+  async sendFollowUp(id: string, message: string): Promise<Task> {
+    return this.manager.sendFollowUp(id, message);
+  }
+
+  async deleteTask(id: string, opts?: { force?: boolean }): Promise<void> {
+    return this.manager.delete(id, opts?.force);
   }
 
   subscribe(handler: (event: TaskEvent) => void): () => void {

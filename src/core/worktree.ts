@@ -8,40 +8,55 @@ const WORKTREES_DIR = path.join(os.homedir(), '.forge', 'worktrees');
 
 function normalizePath(target: string): string {
   const resolved = path.resolve(target);
+  // `fs.realpathSync` only resolves symlinks; it leaves Windows 8.3 short
+  // names untouched (C:\PROGRA~1 stays short). `fs.realpathSync.native` asks
+  // the OS for the final path, which expands short names to their long form.
+  // That matters because `os.homedir()` frequently returns a short name
+  // (e.g. C:\Users\RUNNER~1) on Windows CI runners while git reports the long
+  // form (C:\Users\runneradmin). Keeping every path in the OS-canonical form
+  // is what makes the managed-path guard and orphan detection reliable.
   try {
-    // Resolve 8.3 short names, junctions, and symlinks to the canonical path.
-    // On Windows CI runners, os.homedir() frequently returns an 8.3 short
-    // name (e.g. RUNNER~1) while git reports the resolved long name. Keeping
-    // both sides in the same canonical form is what makes the managed-path
-    // guard and orphan detection reliable. Case is deliberately preserved so
-    // the returned path still matches what `git worktree list` reports.
-    return fs.realpathSync(resolved);
+    return fs.realpathSync.native(resolved);
   } catch {
-    // Path may not exist yet (e.g. WORKTREES_DIR before first use).
-    return resolved;
+    try {
+      return fs.realpathSync(resolved);
+    } catch {
+      // Path may not exist yet (e.g. WORKTREES_DIR before first use).
+      return resolved;
+    }
   }
 }
 
-function samePath(a: string, b: string): boolean {
-  const ra = path.resolve(a);
-  const rb = path.resolve(b);
-  if (process.platform !== 'win32') return ra === rb;
-  // Windows filesystems are case-insensitive; compare case-insensitively so a
-  // worktree created under C:\Users\runneradmin is still recognized when git
-  // reports it as C:\Users\RunnerAdmin.
-  return ra.toLowerCase() === rb.toLowerCase();
+/**
+ * Compare two existing paths by filesystem identity. This is immune to path
+ * spelling differences that string normalization cannot reconcile: 8.3 short
+ * names, junctions, symlinks, drive-letter case, and case-insensitive volumes.
+ */
+function sameIdentity(a: string, b: string): boolean {
+  try {
+    const sa = fs.statSync(a);
+    const sb = fs.statSync(b);
+    // A missing inode (0) would make every unresolved path look identical.
+    if (sa.ino === 0 || sb.ino === 0) return false;
+    return sa.ino === sb.ino && sa.dev === sb.dev;
+  } catch {
+    return false;
+  }
 }
 
 function isManagedWorktreePath(target: string): boolean {
   const managed = normalizePath(WORKTREES_DIR);
   const candidate = normalizePath(target);
   const relative = path.relative(managed, candidate);
-  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
-    return false;
+  if (relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+    return true;
   }
-  // path.relative may succeed on case-variant paths even when the resolved
-  // paths are the same directory, so confirm with a case-insensitive check.
-  return samePath(candidate, path.resolve(managed, relative));
+
+  // Fall back to directory identity for spellings that survive normalization
+  // (for example a symlinked temp dir, or a path whose target does not exist
+  // so realpath cannot canonicalize it). Worktrees always live directly under
+  // the managed root, so comparing the parent directory is sufficient.
+  return sameIdentity(path.dirname(path.resolve(target)), path.resolve(WORKTREES_DIR));
 }
 
 export interface WorktreeInfo {
@@ -172,8 +187,19 @@ export function removeWorktree(info: WorktreeInfo, repoCwd: string, force = fals
   try {
     runGit(['worktree', 'remove', info.path, ...(force ? ['--force'] : [])], repoCwd);
   } catch (err: any) {
-    // If the directory is already gone, that's fine
-    if (fs.existsSync(info.path)) {
+    if (!fs.existsSync(info.path)) {
+      // Already gone: nothing left to clean up.
+    } else if (force) {
+      // Windows occasionally keeps a handle open just long enough for git to
+      // fail. A forced direct delete still honours the hard-delete contract;
+      // prune afterwards so git forgets the stale worktree entry.
+      fs.rmSync(info.path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      try {
+        runGit(['worktree', 'prune'], repoCwd);
+      } catch {
+        // Best effort; the directory itself is already gone.
+      }
+    } else {
       throw err;
     }
   }

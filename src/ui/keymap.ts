@@ -26,6 +26,8 @@ export interface KeyContext {
   overlay: OverlayKind | null;
   /** True while the approvals overlay is asking for approve-all confirmation. */
   confirmingAll?: boolean;
+  /** True while the user is typing a follow-up conversation inside the detail view. */
+  followUpMode?: boolean;
 }
 
 export type DashboardAction =
@@ -38,12 +40,16 @@ export type DashboardAction =
   | { type: 'moveSelection'; delta: number }
   | { type: 'edgeSelection'; edge: 'first' | 'last' }
   | { type: 'openDetail' }
+  | { type: 'enterFollowUp' }
+  | { type: 'exitFollowUp' }
+  | { type: 'submitFollowUp' }
   | { type: 'fold'; expand: boolean }
   | { type: 'openApprovals' }
   | { type: 'cancelTask' }
   | { type: 'resumeTask' }
   | { type: 'mergeTask' }
   | { type: 'discardTask' }
+  | { type: 'deleteTask' }
   | { type: 'diffTask' }
   | { type: 'cycleFilter' }
   | { type: 'focusInput'; seed?: string }
@@ -82,6 +88,18 @@ export function resolveAction(input: string, key: KeyLike, context: KeyContext):
 
   if (context.overlay) {
     return resolveOverlayAction(input, key, context.overlay, context.confirmingAll === true);
+  }
+
+  // While composing a follow-up the focused TextInput owns printable keys:
+  // it handles Enter (submit) and character editing itself. Only navigation
+  // keys are intercepted here, so typing k/j/f/v never scrolls or toggles.
+  if (context.focus === 'detail' && context.followUpMode === true) {
+    if (key.escape) return { type: 'exitFollowUp' };
+    if (key.upArrow) return { type: 'scroll', delta: -1 };
+    if (key.downArrow) return { type: 'scroll', delta: 1 };
+    if (key.pageUp) return { type: 'scroll', delta: -1, page: true };
+    if (key.pageDown) return { type: 'scroll', delta: 1, page: true };
+    return NONE;
   }
 
   if (key.tab) {
@@ -135,6 +153,7 @@ export function resolveAction(input: string, key: KeyLike, context: KeyContext):
   if (input === 'r') return { type: 'resumeTask' };
   if (input === 'm') return { type: 'mergeTask' };
   if (input === 'x') return { type: 'discardTask' };
+  if (input === 'd' || key.delete) return { type: 'deleteTask' };
   if (input === 'D' || (input === 'd' && key.shift)) return { type: 'diffTask' };
   if (input === 's') return { type: 'cycleFilter' };
   if (input === 'f') return { type: 'toggleFollow' };
@@ -153,6 +172,7 @@ function resolveDetailAction(input: string, key: KeyLike): DashboardAction {
   if (key.end || input === 'G') return { type: 'scrollEdge', edge: 'last' };
   if (input === 'f') return { type: 'toggleFollow' };
   if (input === 'v') return { type: 'toggleVerbose' };
+  if (key.return) return { type: 'enterFollowUp' };
   return NONE;
 }
 

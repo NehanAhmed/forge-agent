@@ -25,7 +25,7 @@ export interface ApprovalRequest {
 export interface LogEntry {
   seq: number;
   timestamp: number;
-  type: 'reasoning' | 'tool_call' | 'tool_result' | 'assistant' | 'info' | 'error';
+  type: 'reasoning' | 'tool_call' | 'tool_result' | 'assistant' | 'info' | 'error' | 'user';
   content: string;
   metadata?: Record<string, unknown>;
 }

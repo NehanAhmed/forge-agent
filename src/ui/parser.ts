@@ -17,6 +17,7 @@ export type ParsedCommand =
   | { kind: 'diff'; target: string }
   | { kind: 'merge'; target: string }
   | { kind: 'discard'; target: string }
+  | { kind: 'delete'; target: string }
   | { kind: 'resume'; target: string }
   | { kind: 'collapse'; target: string }
   | { kind: 'expand'; target: string }
@@ -83,6 +84,12 @@ export function parseCommand(input: string): ParsedCommand {
     const target = parts[1] ? parseTaskRef(parts[1]) : null;
     if (!target) return { kind: 'unknown', error: 'Usage: /discard <n>' };
     return { kind: 'discard', target };
+  }
+
+  if (cmd === 'delete' || cmd === 'del' || cmd === 'rm') {
+    const target = parts[1] ? parseTaskRef(parts[1]) : null;
+    if (!target) return { kind: 'unknown', error: `Usage: /${cmd} <n>` };
+    return { kind: 'delete', target };
   }
 
   if (cmd === 'resume') {

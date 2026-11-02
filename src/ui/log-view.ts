@@ -31,6 +31,37 @@ export interface LogWindow {
 }
 
 /**
+ * Merge consecutive assistant entries into a single block so streamed tokens
+ * render as one continuous paragraph instead of one fragmented line per flush.
+ * Non-assistant entries pass through unchanged and break the run.
+ */
+function mergeAssistantEntries(entries: LogEntry[]): LogEntry[] {
+  if (entries.length === 0) return entries;
+
+  const merged: LogEntry[] = [];
+  let buffer: LogEntry | null = null;
+
+  for (const entry of entries) {
+    if (entry.type === 'assistant') {
+      if (!buffer) {
+        buffer = { ...entry };
+      } else {
+        buffer.content += entry.content;
+      }
+    } else {
+      if (buffer) {
+        merged.push(buffer);
+        buffer = null;
+      }
+      merged.push(entry);
+    }
+  }
+
+  if (buffer) merged.push(buffer);
+  return merged;
+}
+
+/**
  * Turn log entries into display lines. Compact mode emits exactly one line per
  * entry; verbose mode wraps long content while keeping a stable prefix.
  */
@@ -39,7 +70,9 @@ export function buildLogLines(entries: LogEntry[], options: LogViewOptions): Log
   const maxLines = options.maxLines ?? 4000;
   const lines: LogDisplayLine[] = [];
 
-  for (const entry of entries) {
+  const merged = mergeAssistantEntries(entries);
+
+  for (const entry of merged) {
     const time = options.timestamps ? `${timeLabel(entry.timestamp)} ` : '';
     const prefix = `${time}${logGlyph(entry.type, options.ascii)} `;
     const prefixWidth = cellWidth(prefix);

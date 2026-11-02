@@ -80,6 +80,24 @@ export function useTaskStore(client: TaskClient): TaskStore {
             current.map(task => (task.id === event.taskId ? { ...task, reviewState: event.reviewState } : task)),
           );
           break;
+        case 'task:deleted':
+          // Hard delete removes the task and its whole subtree. Drop the task
+          // itself plus any descendants so nothing can linger in the list if a
+          // partial failure ever skips a child event.
+          setTasks(current => {
+            const toDelete = new Set<string>([event.taskId]);
+            const findDescendants = (parentId: string) => {
+              for (const child of current) {
+                if (child.parentId === parentId && !toDelete.has(child.id)) {
+                  toDelete.add(child.id);
+                  findDescendants(child.id);
+                }
+              }
+            };
+            findDescendants(event.taskId);
+            return current.filter(task => !toDelete.has(task.id));
+          });
+          break;
         case 'approval:requested':
           setApprovals(current =>
             current.some(approval => approval.id === event.approval.id)

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, usePaste, useWindowSize } from 'ink';
 import type { Approval } from '../../../core/task-manager.js';
 import type { Task } from '../../../core/task.js';
@@ -121,6 +121,9 @@ export function Dashboard({ client }: DashboardProps) {
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [resolving, setResolving] = useState<Set<string>>(() => new Set());
+  const [followUpTaskId, setFollowUpTaskId] = useState<string | null>(null);
+  const [followUpInput, setFollowUpInput] = useState('');
+  const followUpSubmitting = useRef(false);
 
   const treeRows = useMemo(() => getVisibleRows(buildTree(tasks), collapsed), [tasks, collapsed]);
   const filteredRows = useMemo(() => filterRows(treeRows, filter), [treeRows, filter]);
@@ -176,6 +179,16 @@ export function Dashboard({ client }: DashboardProps) {
     setScrollOffset(0);
     setFollow(true);
   }, [selectedId]);
+
+  // If the task being followed up is deleted (or filtered away), drop out of
+  // follow-up mode so the main composer reappears instead of leaving the
+  // dashboard with no active input.
+  useEffect(() => {
+    if (followUpTaskId && !tasks.some(task => task.id === followUpTaskId)) {
+      setFollowUpTaskId(null);
+      setFollowUpInput('');
+    }
+  }, [tasks, followUpTaskId]);
 
   useEffect(() => {
     if (follow) {
@@ -339,12 +352,32 @@ export function Dashboard({ client }: DashboardProps) {
       return;
     }
     openConfirm(
-      'Discard',
+      'Discard Worktree',
       `#${task.displayId} ${task.goal}`,
       `deletes ${task.worktree.branch} and its worktree (cannot be undone)`,
       async () => {
         await client.discardTask(task.id);
-        notify('info', `Discarded #${task.displayId}`);
+        notify('info', `Discarded worktree for #${task.displayId}`);
+      },
+    );
+  }
+
+  function requestDelete(task: Task) {
+    if (isActiveTask(task)) {
+      notify('error', `#${task.displayId} is active. Cancel it before deleting.`);
+      return;
+    }
+    const row = treeRows.find(item => item.task.id === task.id);
+    const descendants = row?.descendantCount ?? 0;
+    openConfirm(
+      'Delete Task',
+      `#${task.displayId} ${task.goal}`,
+      descendants > 0
+        ? `permanently deletes this task, its logs, worktree, and ${descendants} child task(s)`
+        : 'permanently deletes this task, logs, and worktree',
+      async () => {
+        await client.deleteTask(task.id, { force: true });
+        notify('info', `Deleted #${task.displayId}`);
       },
     );
   }
@@ -503,6 +536,46 @@ export function Dashboard({ client }: DashboardProps) {
     }
   }
 
+  function requestFollowUp(task: Task) {
+    // The follow-up composer is the default way to interact with an open task,
+    // so it appears for every task, not just finished ones. Submitting against
+    // a still-running task surfaces the manager's clear error instead of
+    // silently hiding the composer.
+    setFollowUpTaskId(task.id);
+    setFollowUpInput('');
+    setSelectedId(task.id);
+    setFocus('detail');
+  }
+
+  async function submitFollowUp(value: string) {
+    const message = value.trim();
+    const taskId = followUpTaskId;
+    // The focused TextInput owns Enter, but guard anyway so a fast double press
+    // can never queue the same message twice.
+    if (!message || !taskId || followUpSubmitting.current) return;
+
+    followUpSubmitting.current = true;
+    setBusy(true);
+    try {
+      await client.sendFollowUp(taskId, message);
+      // The task is queued again; return to the live log view.
+      setFollowUpInput('');
+      setFollowUpTaskId(null);
+      notify('info', 'Follow-up queued');
+    } catch (error: unknown) {
+      notify('error', errorText(error));
+    } finally {
+      followUpSubmitting.current = false;
+      setBusy(false);
+    }
+  }
+
+  function exitFollowUp() {
+    setFollowUpTaskId(null);
+    setFollowUpInput('');
+    setFocus('list');
+  }
+
   async function submit(value: string) {
     const command = value.trim();
     if (!command || busy) return;
@@ -537,7 +610,7 @@ export function Dashboard({ client }: DashboardProps) {
         case 'open': {
           const task = requireTask(parsed.target);
           revealTask(task);
-          setFocus('detail');
+          requestFollowUp(task);
           break;
         }
         case 'approve': {
@@ -571,6 +644,9 @@ export function Dashboard({ client }: DashboardProps) {
           break;
         case 'discard':
           requestDiscard(requireTask(parsed.target));
+          break;
+        case 'delete':
+          requestDelete(requireTask(parsed.target));
           break;
         case 'collapse':
         case 'expand': {
@@ -635,8 +711,22 @@ export function Dashboard({ client }: DashboardProps) {
         break;
       }
       case 'openDetail':
-        if (selectedTask) setFocus('detail');
+        if (selectedTask) {
+          // Enter on a task opens it and focuses the follow-up composer.
+          requestFollowUp(selectedTask);
+        } else {
+          notify('error', 'Select a task first.');
+        }
+        break;
+      case 'enterFollowUp':
+        if (selectedTask) requestFollowUp(selectedTask);
         else notify('error', 'Select a task first.');
+        break;
+      case 'exitFollowUp':
+        exitFollowUp();
+        break;
+      case 'submitFollowUp':
+        void submitFollowUp(followUpInput);
         break;
       case 'fold':
         collapseSelected(action.expand);
@@ -659,6 +749,10 @@ export function Dashboard({ client }: DashboardProps) {
         break;
       case 'discardTask':
         if (selectedTask) requestDiscard(selectedTask);
+        else notify('error', 'Select a task first.');
+        break;
+      case 'deleteTask':
+        if (selectedTask) requestDelete(selectedTask);
         else notify('error', 'Select a task first.');
         break;
       case 'diffTask':
@@ -771,6 +865,7 @@ export function Dashboard({ client }: DashboardProps) {
       focus,
       overlay: overlay?.kind ?? null,
       confirmingAll: overlay?.kind === 'approvals' && overlay.confirmingAll,
+      followUpMode: followUpTaskId !== null,
     });
     handleAction(action);
   });
@@ -781,6 +876,10 @@ export function Dashboard({ client }: DashboardProps) {
       .replace(/\r\n|\r|\n/g, ' ')
       .replace(/\t/g, '  ')
       .slice(0, 4000);
+    if (followUpTaskId) {
+      setFollowUpInput(current => (current + cleaned).slice(0, 4000));
+      return;
+    }
     setFocus('input');
     setInput(current => (current + cleaned).slice(0, 4000));
   });
@@ -826,11 +925,13 @@ export function Dashboard({ client }: DashboardProps) {
           : '';
   const hints = overlay
     ? overlayHints
-    : focus === 'input'
-      ? `enter run${dot}/ commands${dot}tab list${dot}esc list`
-      : focus === 'list'
-        ? `${nav} select${dot}${lr} fold${dot}enter open${dot}a approvals${dot}? help`
-        : `${nav} scroll${dot}f follow${dot}v verbose${dot}esc back`;
+    : followUpTaskId
+      ? `type message${dot}enter send${dot}${nav} scroll${dot}esc back`
+      : focus === 'input'
+        ? `enter run${dot}/ commands${dot}tab list${dot}esc list`
+        : focus === 'list'
+          ? `${nav} select${dot}${lr} fold${dot}enter open${dot}d del${dot}x discard${dot}m merge${dot}c cancel${dot}a approvals${dot}? help`
+          : `${nav} scroll${dot}f follow${dot}v verbose${dot}enter follow-up${dot}esc back`;
 
   return (
     <Box flexDirection="column" width={columns} height={rows} overflow="hidden">
@@ -918,6 +1019,10 @@ export function Dashboard({ client }: DashboardProps) {
                     glyphs={glyphs}
                     ascii={ascii}
                     now={now}
+                    followUpMode={followUpTaskId === selectedTask.id}
+                    followUpValue={followUpInput}
+                    onFollowUpChange={setFollowUpInput}
+                    onFollowUpSubmit={value => void submitFollowUp(value)}
                   />
                 ) : (
                   <Text dimColor>Select a task to see its log.</Text>
@@ -928,7 +1033,7 @@ export function Dashboard({ client }: DashboardProps) {
         )}
       </Box>
 
-      {layout.inputHeight > 0 && (
+      {layout.inputHeight > 0 && !followUpTaskId && (
         <InputBar
           value={input}
           onChange={value => setInput(value.slice(0, 4000))}

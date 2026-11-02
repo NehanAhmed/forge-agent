@@ -30,11 +30,14 @@ describe('UI Pure Modules', () => {
       assert.deepEqual(parseCommand('/deny 3.2'), { kind: 'deny', target: '3.2' });
     });
 
-    it('parses /diff, /merge, /discard, /resume', () => {
+    it('parses /diff, /merge, /discard, /resume, /delete', () => {
       assert.deepEqual(parseCommand('/diff 4'), { kind: 'diff', target: '4' });
       assert.deepEqual(parseCommand('/merge 4'), { kind: 'merge', target: '4' });
       assert.deepEqual(parseCommand('/discard 4'), { kind: 'discard', target: '4' });
       assert.deepEqual(parseCommand('/resume 4'), { kind: 'resume', target: '4' });
+      assert.deepEqual(parseCommand('/delete 4'), { kind: 'delete', target: '4' });
+      assert.deepEqual(parseCommand('/del 4'), { kind: 'delete', target: '4' });
+      assert.deepEqual(parseCommand('/rm 4'), { kind: 'delete', target: '4' });
     });
 
     it('parses /collapse and /expand', () => {
