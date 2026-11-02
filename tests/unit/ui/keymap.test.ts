@@ -58,6 +58,31 @@ describe('UI Keymap', () => {
       type: 'scrollEdge',
       edge: 'first',
     });
+    assert.deepEqual(resolveAction('', key({ return: true }), { focus: 'detail', overlay: null }), {
+      type: 'enterFollowUp',
+    });
+  });
+
+  it('exits and scrolls while composing a follow-up without stealing typed keys', () => {
+    const context = { focus: 'detail' as const, overlay: null, followUpMode: true };
+
+    assert.deepEqual(resolveAction('', key({ escape: true }), context), { type: 'exitFollowUp' });
+    assert.deepEqual(resolveAction('', key({ upArrow: true }), context), { type: 'scroll', delta: -1 });
+    assert.deepEqual(resolveAction('', key({ downArrow: true }), context), { type: 'scroll', delta: 1 });
+    assert.deepEqual(resolveAction('', key({ pageUp: true }), context), {
+      type: 'scroll',
+      delta: -1,
+      page: true,
+    });
+
+    // The focused TextInput submits on Enter; the global keymap must not also
+    // dispatch a submit, or the same message would be queued twice.
+    assert.deepEqual(resolveAction('', key({ return: true }), context), { type: 'none' });
+
+    // Printable characters belong to the composer, not to dashboard shortcuts.
+    for (const letter of ['f', 'v', 'k', 'j', '?', 'q', 'a', 'd']) {
+      assert.deepEqual(resolveAction(letter, key(), context), { type: 'none' });
+    }
   });
 
   it('cycles focus and blurs predictably', () => {

@@ -564,6 +564,7 @@ export class TaskManager extends EventEmitter {
     this.pendingFollowUps.set(id, trimmed);
 
     // Reset the task to a re-runnable state.
+    const oldStatus = task.status;
     task.status = 'queued';
     task.error = undefined;
     task.resumable = false;
@@ -571,7 +572,7 @@ export class TaskManager extends EventEmitter {
 
     this.queue.push(id);
     this.scheduleSave();
-    this.emit('task:status', { taskId: id, oldStatus: task.status, newStatus: 'queued', task });
+    this.emit('task:status', { taskId: id, oldStatus, newStatus: 'queued', task });
 
     this.processQueue();
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, usePaste, useWindowSize } from 'ink';
 import type { Approval } from '../../../core/task-manager.js';
 import type { Task } from '../../../core/task.js';
@@ -123,6 +123,7 @@ export function Dashboard({ client }: DashboardProps) {
   const [resolving, setResolving] = useState<Set<string>>(() => new Set());
   const [followUpTaskId, setFollowUpTaskId] = useState<string | null>(null);
   const [followUpInput, setFollowUpInput] = useState('');
+  const followUpSubmitting = useRef(false);
 
   const treeRows = useMemo(() => getVisibleRows(buildTree(tasks), collapsed), [tasks, collapsed]);
   const filteredRows = useMemo(() => filterRows(treeRows, filter), [treeRows, filter]);
@@ -178,6 +179,16 @@ export function Dashboard({ client }: DashboardProps) {
     setScrollOffset(0);
     setFollow(true);
   }, [selectedId]);
+
+  // If the task being followed up is deleted (or filtered away), drop out of
+  // follow-up mode so the main composer reappears instead of leaving the
+  // dashboard with no active input.
+  useEffect(() => {
+    if (followUpTaskId && !tasks.some(task => task.id === followUpTaskId)) {
+      setFollowUpTaskId(null);
+      setFollowUpInput('');
+    }
+  }, [tasks, followUpTaskId]);
 
   useEffect(() => {
     if (follow) {
@@ -526,29 +537,35 @@ export function Dashboard({ client }: DashboardProps) {
   }
 
   function requestFollowUp(task: Task) {
-    if (isActiveTask(task)) {
-      notify('error', 'Cannot follow up on an active task.');
-      return;
-    }
+    // The follow-up composer is the default way to interact with an open task,
+    // so it appears for every task, not just finished ones. Submitting against
+    // a still-running task surfaces the manager's clear error instead of
+    // silently hiding the composer.
     setFollowUpTaskId(task.id);
     setFollowUpInput('');
+    setSelectedId(task.id);
     setFocus('detail');
   }
 
   async function submitFollowUp(value: string) {
     const message = value.trim();
-    if (!message || !followUpTaskId) return;
+    const taskId = followUpTaskId;
+    // The focused TextInput owns Enter, but guard anyway so a fast double press
+    // can never queue the same message twice.
+    if (!message || !taskId || followUpSubmitting.current) return;
 
+    followUpSubmitting.current = true;
     setBusy(true);
     try {
-      await client.sendFollowUp(followUpTaskId, message);
-      setFollowUpTaskId(null);
+      await client.sendFollowUp(taskId, message);
+      // The task is queued again; return to the live log view.
       setFollowUpInput('');
-      setFocus('detail');
-      notify('info', 'Follow-up submitted');
+      setFollowUpTaskId(null);
+      notify('info', 'Follow-up queued');
     } catch (error: unknown) {
       notify('error', errorText(error));
     } finally {
+      followUpSubmitting.current = false;
       setBusy(false);
     }
   }
@@ -593,7 +610,7 @@ export function Dashboard({ client }: DashboardProps) {
         case 'open': {
           const task = requireTask(parsed.target);
           revealTask(task);
-          setFocus('detail');
+          requestFollowUp(task);
           break;
         }
         case 'approve': {
@@ -695,13 +712,8 @@ export function Dashboard({ client }: DashboardProps) {
       }
       case 'openDetail':
         if (selectedTask) {
-          // If the task is in a terminal state, automatically enter follow-up
-          // mode so the user can continue the conversation right away.
-          if (selectedTask.status === 'done' || selectedTask.status === 'failed' || selectedTask.status === 'cancelled') {
-            requestFollowUp(selectedTask);
-          } else {
-            setFocus('detail');
-          }
+          // Enter on a task opens it and focuses the follow-up composer.
+          requestFollowUp(selectedTask);
         } else {
           notify('error', 'Select a task first.');
         }
@@ -864,6 +876,10 @@ export function Dashboard({ client }: DashboardProps) {
       .replace(/\r\n|\r|\n/g, ' ')
       .replace(/\t/g, '  ')
       .slice(0, 4000);
+    if (followUpTaskId) {
+      setFollowUpInput(current => (current + cleaned).slice(0, 4000));
+      return;
+    }
     setFocus('input');
     setInput(current => (current + cleaned).slice(0, 4000));
   });
@@ -909,11 +925,13 @@ export function Dashboard({ client }: DashboardProps) {
           : '';
   const hints = overlay
     ? overlayHints
-    : focus === 'input'
-      ? `enter run${dot}/ commands${dot}tab list${dot}esc list`
-      : focus === 'list'
-        ? `${nav} select${dot}${lr} fold${dot}enter open${dot}d del${dot}x discard${dot}m merge${dot}c cancel${dot}a approvals${dot}? help`
-        : `${nav} scroll${dot}f follow${dot}v verbose${dot}esc back`;
+    : followUpTaskId
+      ? `type message${dot}enter send${dot}${nav} scroll${dot}esc back`
+      : focus === 'input'
+        ? `enter run${dot}/ commands${dot}tab list${dot}esc list`
+        : focus === 'list'
+          ? `${nav} select${dot}${lr} fold${dot}enter open${dot}d del${dot}x discard${dot}m merge${dot}c cancel${dot}a approvals${dot}? help`
+          : `${nav} scroll${dot}f follow${dot}v verbose${dot}enter follow-up${dot}esc back`;
 
   return (
     <Box flexDirection="column" width={columns} height={rows} overflow="hidden">

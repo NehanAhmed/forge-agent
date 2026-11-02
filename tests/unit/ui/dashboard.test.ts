@@ -23,6 +23,7 @@ class MockClient implements TaskClient {
   readonly handlers = new Set<(event: TaskEvent) => void>();
   readonly approvals: Approval[] = [];
   readonly resolved: Array<{ approvalId: string; decision: 'approve' | 'deny' }> = [];
+  readonly followUps: Array<{ id: string; message: string }> = [];
 
   constructor(tasks: Task[]) {
     this.tasks = tasks;
@@ -73,10 +74,11 @@ class MockClient implements TaskClient {
     return { success: true };
   }
   async discardTask(): Promise<void> {}
-  async sendFollowUp(id: string, _message: string): Promise<Task> {
-    const task = this.tasks.find(t => t.id === id);
-    if (!task) throw new Error(`Task not found: ${id}`);
-    return task;
+  async sendFollowUp(id: string, message: string): Promise<Task> {
+    const target = this.tasks.find(item => item.id === id);
+    if (!target) throw new Error(`Task not found: ${id}`);
+    this.followUps.push({ id, message });
+    return target;
   }
   async deleteTask(id: string, _opts?: { force?: boolean }): Promise<void> {
     // Mock: remove task from list and emit event
@@ -105,6 +107,22 @@ async function waitForFrame(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if ((instance.lastFrame() ?? '').includes(text)) return true;
+    await wait(50);
+  }
+  return false;
+}
+
+async function waitForFrameWithout(
+  instance: { lastFrame: () => string | undefined },
+  text: string,
+  timeoutMs = 2000,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const frame = instance.lastFrame();
+    // Only accept a rendered frame; an empty frame would trivially satisfy
+    // "does not contain" before Ink has painted anything.
+    if (frame !== undefined && frame !== '' && !frame.includes(text)) return true;
     await wait(50);
   }
   return false;
@@ -206,6 +224,81 @@ describe('Dashboard', () => {
       instance.stdin.write('y');
       assert.ok(await waitForFrame(instance, 'Approved 1 pending action'));
       assert.deepEqual(client.resolved, [{ approvalId: 'approval_1', decision: 'approve' }]);
+    } finally {
+      instance.unmount();
+    }
+  });
+
+  it('opens the follow-up composer on Enter and queues the typed message', async () => {
+    const finished = task('task_a', 'Finished goal', '1', 1_000);
+    const client = new MockClient([finished]);
+    const instance = render(React.createElement(Dashboard, { client }));
+
+    try {
+      await wait(100);
+      instance.stdin.write('\t'); // list focus
+      await wait(50);
+      instance.stdin.write('\r'); // open the task; composer is focused
+      assert.ok(await waitForFrame(instance, 'Type a follow-up message'));
+
+      instance.stdin.write('add more tests');
+      await wait(50);
+      instance.stdin.write('\r');
+      assert.ok(await waitForFrame(instance, 'Follow-up queued'));
+      assert.deepEqual(client.followUps, [{ id: finished.id, message: 'add more tests' }]);
+    } finally {
+      instance.unmount();
+    }
+  });
+
+  it('leaves follow-up mode with Escape so a new task can be typed', async () => {
+    const finished = task('task_a', 'Finished goal', '1', 1_000);
+    const client = new MockClient([finished]);
+    const instance = render(React.createElement(Dashboard, { client }));
+
+    try {
+      await wait(100);
+      instance.stdin.write('\t');
+      await wait(50);
+      instance.stdin.write('\r');
+      assert.ok(await waitForFrame(instance, 'Type a follow-up message'));
+
+      instance.stdin.write('\u001B'); // escape
+      await wait(100);
+      const frame = instance.lastFrame() ?? '';
+      assert.ok(!frame.includes('Type a follow-up message'));
+      assert.ok(frame.includes('Describe a task or type /help'));
+    } finally {
+      instance.unmount();
+    }
+  });
+
+  it('removes a hard-deleted task from the list immediately', async () => {
+    const older = task('task_a', 'Older goal', '1', 1_000);
+    const newer = task('task_b', 'Newer goal', '2', 2_000);
+    const client = new MockClient([older, newer]);
+    const instance = render(React.createElement(Dashboard, { client }));
+
+    try {
+      await wait(100);
+      instance.stdin.write('\t'); // list focus
+      await wait(50);
+      instance.stdin.write('d');
+      assert.ok(await waitForFrame(instance, 'Delete Task'));
+
+      instance.stdin.write('y');
+      assert.ok(await waitForFrame(instance, 'Deleted #2'));
+
+      // Removal happens through the store's task:deleted handler and the
+      // selection auto-heal effect, so wait for the row to disappear instead
+      // of assuming it is gone in the same frame as the notice.
+      assert.ok(await waitForFrameWithout(instance, 'Newer goal'));
+      const frame = instance.lastFrame() ?? '';
+      assert.ok(frame.includes('Older goal'));
+      assert.deepEqual(
+        client.tasks.map(item => item.id),
+        [older.id],
+      );
     } finally {
       instance.unmount();
     }

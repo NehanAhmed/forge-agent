@@ -254,6 +254,94 @@ describe('Phase 4: TaskManager Queue, Concurrency & Lifecycle', () => {
     assert.equal(resumed.error, undefined);
   });
 
+  it('re-queues a finished task and runs its follow-up message', async () => {
+    const dir = initTempGitRepo();
+    const inputs: string[] = [];
+    const callModel = (options: { input: string }) => {
+      inputs.push(options.input);
+      return {
+        async *getTextStream() {
+          yield `handled: ${options.input}`;
+        },
+        async getText() {
+          return `handled: ${options.input}`;
+        },
+        async getUsage() {
+          return { inputTokens: 1, outputTokens: 1, cost: 0 };
+        },
+        async *getReasoningStream() {},
+        async *getToolCallsStream() {},
+      };
+    };
+    const manager = new TaskManager({
+      concurrency: 1,
+      repoCwd: dir,
+      tasksDir: path.join(dir, 'tasks'),
+      callModel,
+    });
+
+    try {
+      const task = manager.create('Initial goal', { cwd: dir, isolation: 'shared' });
+      await waitFor(() => manager.get(task.id)?.status === 'done', 5000, 'initial run');
+
+      // The task object is live and processQueue() may start it immediately
+      // (same convention as create()), so assert the observable re-queue
+      // transition instead of the mutable status on the returned object.
+      const statusChanges: Array<{ oldStatus: string; newStatus: string }> = [];
+      manager.on('task:status', event => statusChanges.push(event));
+      const returned = manager.sendFollowUp(task.id, 'Second question');
+
+      assert.equal(returned.id, task.id);
+      assert.ok(statusChanges.some(change => change.oldStatus === 'done' && change.newStatus === 'queued'));
+
+      await waitFor(() => inputs.length === 2 && manager.get(task.id)?.status === 'done', 5000, 'follow-up run');
+
+      assert.deepEqual(inputs, ['Initial goal', 'Second question']);
+      const log = manager.getLog(task.id);
+      assert.ok(log.some(entry => entry.type === 'user' && entry.content === 'Second question'));
+    } finally {
+      await manager.shutdown({ graceMs: 500 });
+    }
+  });
+
+  it('rejects a follow-up while the task is still active', () => {
+    const dir = createTempDir('forge-task-followup-guard-');
+    const manager = new TaskManager({
+      concurrency: 0,
+      repoCwd: dir,
+      tasksDir: path.join(dir, 'tasks'),
+      callModel: createFakeModelCall(),
+    });
+    const task = manager.create('Still queued');
+
+    assert.throws(() => manager.sendFollowUp(task.id, 'too early'), /Only finished tasks/);
+  });
+
+  it('force-deletes a task and all of its descendants', async () => {
+    const dir = createTempDir('forge-task-delete-');
+    const manager = new TaskManager({
+      concurrency: 0,
+      repoCwd: dir,
+      tasksDir: path.join(dir, 'tasks'),
+      callModel: createFakeModelCall(),
+    });
+
+    const parent = manager.create('Parent to delete', { cwd: dir, isolation: 'shared' });
+    const child = await manager.spawnChild(parent.id, 'Child to delete', true);
+    const grandchild = await manager.spawnChild(child.id, 'Grandchild to delete', true);
+
+    const deleted: string[] = [];
+    manager.on('task:deleted', event => deleted.push(event.taskId));
+
+    await manager.delete(parent.id, true);
+
+    assert.equal(manager.get(parent.id), undefined);
+    assert.equal(manager.get(child.id), undefined);
+    assert.equal(manager.get(grandchild.id), undefined);
+    assert.equal(manager.list().length, 0);
+    assert.deepEqual(new Set(deleted), new Set([parent.id, child.id, grandchild.id]));
+  });
+
   it('emits events on task lifecycle changes', () => {
     const dir = createTempDir('forge-task-events-');
     const manager = new TaskManager({

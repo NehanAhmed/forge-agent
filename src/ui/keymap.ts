@@ -90,6 +90,18 @@ export function resolveAction(input: string, key: KeyLike, context: KeyContext):
     return resolveOverlayAction(input, key, context.overlay, context.confirmingAll === true);
   }
 
+  // While composing a follow-up the focused TextInput owns printable keys:
+  // it handles Enter (submit) and character editing itself. Only navigation
+  // keys are intercepted here, so typing k/j/f/v never scrolls or toggles.
+  if (context.focus === 'detail' && context.followUpMode === true) {
+    if (key.escape) return { type: 'exitFollowUp' };
+    if (key.upArrow) return { type: 'scroll', delta: -1 };
+    if (key.downArrow) return { type: 'scroll', delta: 1 };
+    if (key.pageUp) return { type: 'scroll', delta: -1, page: true };
+    if (key.pageDown) return { type: 'scroll', delta: 1, page: true };
+    return NONE;
+  }
+
   if (key.tab) {
     return { type: 'cycleFocus', reverse: key.shift };
   }
@@ -103,7 +115,7 @@ export function resolveAction(input: string, key: KeyLike, context: KeyContext):
   }
 
   if (context.focus === 'detail') {
-    return resolveDetailAction(input, key, context.followUpMode === true);
+    return resolveDetailAction(input, key);
   }
 
   // Up/Down move the list from both the list and the input. This is deliberate:
@@ -151,12 +163,7 @@ export function resolveAction(input: string, key: KeyLike, context: KeyContext):
   return NONE;
 }
 
-function resolveDetailAction(input: string, key: KeyLike, followUpMode: boolean): DashboardAction {
-  if (followUpMode) {
-    if (key.escape) return { type: 'exitFollowUp' };
-    if (key.return) return { type: 'submitFollowUp' };
-    return NONE;
-  }
+function resolveDetailAction(input: string, key: KeyLike): DashboardAction {
   if (key.upArrow || input === 'k') return { type: 'scroll', delta: -1 };
   if (key.downArrow || input === 'j') return { type: 'scroll', delta: 1 };
   if (key.pageUp) return { type: 'scroll', delta: -1, page: true };

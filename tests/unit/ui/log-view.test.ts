@@ -36,6 +36,31 @@ describe('UI Log View', () => {
     assert.equal(lines[0]!.prefix.length, lines[1]!.prefix.length);
   });
 
+  it('merges consecutive streamed assistant chunks into one paragraph', () => {
+    const lines = buildLogLines(
+      [entry(1, 'assistant', 'Hello '), entry(2, 'assistant', 'world, '), entry(3, 'assistant', 'one sentence.')],
+      { width: 80, timestamps: true, verbose: true, ascii: false },
+    );
+
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0]!.text, 'Hello world, one sentence.');
+    // The merged block keeps the first chunk's sequence/timestamp.
+    assert.equal(lines[0]!.entry.seq, 1);
+    assert.equal(lines[0]!.kind, 'entry');
+  });
+
+  it('treats non-assistant entries as boundaries between assistant runs', () => {
+    const lines = buildLogLines(
+      [entry(1, 'assistant', 'a'), entry(2, 'tool_call', 'run_bash'), entry(3, 'assistant', 'b')],
+      { width: 80, timestamps: false, verbose: true, ascii: true },
+    );
+
+    assert.deepEqual(
+      lines.map(line => line.text),
+      ['a', 'run_bash', 'b'],
+    );
+  });
+
   it('windows lines from the bottom and clamps offsets', () => {
     const lines = buildLogLines(
       Array.from({ length: 10 }, (_, index) => entry(index + 1, 'info', `line ${index + 1}`)),

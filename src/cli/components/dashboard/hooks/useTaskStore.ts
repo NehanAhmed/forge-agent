@@ -81,14 +81,17 @@ export function useTaskStore(client: TaskClient): TaskStore {
           );
           break;
         case 'task:deleted':
-          // Clean up any orphaned child tasks that may have been missed.
+          // Hard delete removes the task and its whole subtree. Drop the task
+          // itself plus any descendants so nothing can linger in the list if a
+          // partial failure ever skips a child event.
           setTasks(current => {
-            const toDelete = new Set<string>();
+            const toDelete = new Set<string>([event.taskId]);
             const findDescendants = (parentId: string) => {
-              const children = current.filter(t => t.parentId === parentId);
-              for (const child of children) {
-                toDelete.add(child.id);
-                findDescendants(child.id);
+              for (const child of current) {
+                if (child.parentId === parentId && !toDelete.has(child.id)) {
+                  toDelete.add(child.id);
+                  findDescendants(child.id);
+                }
               }
             };
             findDescendants(event.taskId);
