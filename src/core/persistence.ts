@@ -166,22 +166,24 @@ export function getTaskStateDir(taskId: string, tasksDir?: string): string {
   return ensureTaskDir(taskId, tasksDir);
 }
 
+function isMissingPathError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as NodeJS.ErrnoException).code === 'ENOENT';
+}
+
 export function deleteTaskStorage(taskId: string, tasksDir?: string): void {
   const dir = tasksDir ?? DEFAULT_TASKS_DIR;
   const logPath = getTaskLogPath(taskId, dir);
   try {
-    if (fs.existsSync(logPath)) {
-      fs.unlinkSync(logPath);
-    }
-  } catch {
-    // ignore
+    // No existsSync check: unlink is atomic and a concurrent removal surfaces
+    // as ENOENT, which is the only failure we can safely ignore.
+    fs.unlinkSync(logPath);
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
   }
   const taskDir = getTaskDir(taskId, dir);
   try {
-    if (fs.existsSync(taskDir)) {
-      fs.rmSync(taskDir, { recursive: true, force: true });
-    }
-  } catch {
-    // ignore
+    fs.rmSync(taskDir, { recursive: true, force: true });
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
   }
 }

@@ -1135,19 +1135,28 @@ export class TaskManager extends EventEmitter {
   }
 
   /**
-   * Recursively remove a task and all its descendants. When `force` is true,
-   * running/queued tasks are cancelled first, children are deleted depth-first,
-   * and worktree cleanup failures are suppressed.
+   * Recursively remove a task and all its descendants. A forced delete always
+   * cancels the whole subtree, even when the root has already finished. A
+   * non-forced delete is rejected before any mutation when the task is active
+   * or still has children.
    */
   async delete(id: string, force = false): Promise<void> {
     const task = this.tasks.get(id);
     if (!task) throw new Error(`Task not found: ${id}`);
-    if (!force && (task.status === 'running' || task.status === 'waiting_approval')) {
-      throw new Error(`Cannot delete active task #${task.displayId}. Cancel it first.`);
+
+    if (!force) {
+      if (task.status === 'running' || task.status === 'waiting_approval') {
+        throw new Error(`Cannot delete active task #${task.displayId}. Cancel it first.`);
+      }
+      const children = descendantsOf(Array.from(this.tasks.values()), id);
+      if (children.length > 0) {
+        throw new Error(`Task #${task.displayId} has ${children.length} children. Delete them first or use force.`);
+      }
     }
 
-    // Cancel if still active
-    if (task.status === 'running' || task.status === 'waiting_approval' || task.status === 'queued') {
+    // Forced deletion cancels the subtree regardless of the root's status so no
+    // descendant run can outlive its task record.
+    if (force || task.status === 'running' || task.status === 'waiting_approval' || task.status === 'queued') {
       await this.cancel(id);
     }
 
@@ -1160,11 +1169,6 @@ export class TaskManager extends EventEmitter {
         if (this.tasks.has(child.id)) {
           await this._removeSingleTask(child.id, force);
         }
-      }
-    } else {
-      const children = descendantsOf(Array.from(this.tasks.values()), id);
-      if (children.length > 0) {
-        throw new Error(`Task #${task.displayId} has ${children.length} children. Delete them first or use force.`);
       }
     }
 
@@ -1181,20 +1185,31 @@ export class TaskManager extends EventEmitter {
       await this.cancel(id);
     }
 
-    // Remove worktree
+    // Let an interrupted run finish unwinding before its worktree and storage
+    // are removed; otherwise it can recreate files or fail on open handles.
+    await this.waitForActiveRun(id);
+
+    // Remove the worktree. Failures propagate (also for forced deletes) so the
+    // task is left intact and can be retried once the cause is fixed.
     if (task.worktree) {
-      try {
-        removeWorktree(task.worktree, this.repoCwd, force);
-      } catch (err: any) {
-        if (!force) throw err;
-      }
+      removeWorktree(task.worktree, this.repoCwd, force);
     }
+
+    // Clean up storage before dropping the in-memory record: if this fails the
+    // task stays visible and deletable.
+    deleteTaskStorage(id, this.tasksDir);
 
     // Remove from memory
     this.tasks.delete(id);
 
     // Remove any pending follow-up
     this.pendingFollowUps.delete(id);
+
+    // Drop all per-task log state so a later task reusing nothing leaks memory.
+    this.logs.delete(id);
+    this.logSeq.delete(id);
+    this.logSeqReady.delete(id);
+    this.logHistoryLoaded.delete(id);
 
     // Remove approvals
     for (const [approvalId, approval] of this.approvals.entries()) {
@@ -1204,10 +1219,19 @@ export class TaskManager extends EventEmitter {
       }
     }
 
-    // Clean up storage
-    deleteTaskStorage(id, this.tasksDir);
     this.scheduleSave();
     this.emit('task:deleted', { taskId: id });
+  }
+
+  /** Wait for an active run to settle, tolerating a rejected run. */
+  private async waitForActiveRun(id: string): Promise<void> {
+    const run = this.activeRuns.get(id);
+    if (!run) return;
+    try {
+      await run;
+    } catch {
+      // The run's failure is already recorded on the task; cleanup continues.
+    }
   }
 
   async shutdown(opts?: { graceMs?: number }): Promise<void> {

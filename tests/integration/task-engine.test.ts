@@ -317,6 +317,27 @@ describe('Phase 4: TaskManager Queue, Concurrency & Lifecycle', () => {
     assert.throws(() => manager.sendFollowUp(task.id, 'too early'), /Only finished tasks/);
   });
 
+  it('rejects a non-forced delete with children without mutating the tree', async () => {
+    const dir = createTempDir('forge-task-delete-guard-');
+    const manager = new TaskManager({
+      concurrency: 0,
+      repoCwd: dir,
+      tasksDir: path.join(dir, 'tasks'),
+      callModel: createFakeModelCall(),
+    });
+
+    const parent = manager.create('Parent to keep', { cwd: dir, isolation: 'shared' });
+    const child = await manager.spawnChild(parent.id, 'Child to keep', true);
+
+    // The child check must run before cancellation, so a rejected delete leaves
+    // every task exactly as it was.
+    await assert.rejects(manager.delete(parent.id, false), /children/);
+
+    assert.equal(manager.get(parent.id)?.status, 'queued');
+    assert.equal(manager.get(child.id)?.status, 'queued');
+    assert.equal(manager.list().length, 2);
+  });
+
   it('force-deletes a task and all of its descendants', async () => {
     const dir = createTempDir('forge-task-delete-');
     const manager = new TaskManager({
