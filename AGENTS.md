@@ -223,3 +223,6 @@ npm `gitHead` must all agree. Code merged after a tag waits for the next release
 7. **Never do destructive or irreversible things** — no deleting user work, no
    `git push --force`, `reset --hard`, `--no-verify`, no publishing/version bumping
    without being asked, and no secrets in code, logs, commits, or tests.
+8. **Always Run the Verification Pipeline** Always run all the verification test Unit tests and Integration Tests before committing things.
+9. **Split the Large task into chunks** If user  has given a large tasks that can take time and token so you should break it into phases and then commit after        completing each phase and reviewing everything before moving to next phase
+  
