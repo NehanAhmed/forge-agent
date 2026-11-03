@@ -118,13 +118,18 @@ ASCII mode, timestamps, cost labels, alternate-screen use, and child-task limits
 
 ## Where your data lives
 
+Forge scopes tasks, worktrees, and session metadata to the directory it was opened in.
+Each directory gets a folder named `<slug>-<hash12>`, derived from its canonical path, and
+`project.json` records the exact path.
+
 | Path | Contents |
 | --- | --- |
 | `.agent-sessions/` in the project | Chat session state |
-| `~/.forge/tasks/` | Task state and logs |
-| `~/.forge/worktrees/` | Task worktrees and `agent/task-*` branches |
-| `~/.forge/meta/meta.json` | Session titles and model choices |
-| `~/.forge/config.json` | API key and UI settings |
+| `~/.forge/projects/<key>/tasks/` | Task index, logs, and per-task state |
+| `~/.forge/projects/<key>/worktrees/` | Task worktrees and `agent/task-*` branches |
+| `~/.forge/projects/<key>/meta/meta.json` | Session titles and model choices for that directory |
+| `~/.forge/projects/<key>/project.json` | Exact canonical path the project folder belongs to |
+| `~/.forge/config.json` | API key and UI settings (global) |
 
 Add `.agent-sessions/` to your `.gitignore` if you use chat; everything else is stored
 outside the project. Deleting a task's worktree from the dashboard also removes its branch.

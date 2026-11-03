@@ -88,7 +88,7 @@ In the dashboard, requests land in the approvals inbox (`a`).
 
 Tasks with `isolation: 'worktree'` (the default for write-capable work) get:
 
-- A worktree under `~/.forge/worktrees/` on a branch named `agent/task-*`.
+- A worktree under `~/.forge/projects/<key>/worktrees/` on a branch named `agent/task-*`.
 - A checkpoint commit of any remaining changes when the task finishes, so work is not lost
   to a dirty worktree. A failing hook sets the task's `reviewState` to `needs_attention`
   instead of discarding the changes.
@@ -109,9 +109,11 @@ one log write and one re-render each.
 
 ## Persistence
 
-- `~/.forge/tasks/` holds a task index and one append-only JSON-lines log per task. The
-  index is written atomically (temp file + rename) and saved on a 500 ms debounce; task logs
-  are appended to their JSONL file directly.
+- All task storage is scoped to the directory Forge was opened in:
+  `~/.forge/projects/<key>/tasks/` (with `<key>` = `<slug>-<hash12>` from the canonical
+  path; `project.json` records the exact path). It holds a task index and one append-only
+  JSON-lines log per task. The index is written atomically (temp file + rename) and saved on
+  a 500 ms debounce; task logs are appended to their JSONL file directly.
 - Logs are also kept in a 2,000-entry in-memory ring for the UI; the selected task's log is
   the only one read for display.
 - On startup, tasks that were `running` when the process died are reconciled to a resumable

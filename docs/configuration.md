@@ -102,13 +102,21 @@ need to.
 | Path | Contents | Scope |
 | --- | --- | --- |
 | `~/.forge/config.json` | API key and settings | Global |
-| `~/.forge/tasks/` | Task index, per-task logs and session state | Global |
-| `~/.forge/worktrees/` | Task worktrees and `agent/task-*` branches | Global |
-| `~/.forge/meta/meta.json` | Chat session titles and chosen models | Global |
+| `~/.forge/projects/<key>/project.json` | Exact canonical path and creation time | Per project |
+| `~/.forge/projects/<key>/tasks/` | Task index, per-task logs and session state | Per project |
+| `~/.forge/projects/<key>/worktrees/` | Task worktrees and `agent/task-*` branches | Per project |
+| `~/.forge/projects/<key>/meta/meta.json` | Chat session titles and chosen models | Per project |
 | `.agent-sessions/` | Chat session state | Per project |
+
+`<key>` is `<slug>-<hash12>`, where the slug is a sanitized version of the directory name
+and the hash is derived from the canonical path. Because the key is deterministic, opening
+Forge in the same directory restores that directory's tasks, worktrees, and session list.
 
 Forge does not stage or commit any of these. It does create `.agent-sessions/` inside the
 project, so add that directory to `.gitignore`. Deleting a task's state directory
-(`~/.forge/tasks/<taskId>/`) removes its session state only; the task index and log stay in
-`~/.forge/tasks/`. Use `/discard <n>` in the dashboard to remove the task's worktree and
-branch.
+(`~/.forge/projects/<key>/tasks/<taskId>/`) removes its session state only; the task index
+and log stay in the same `tasks/` folder. Use `/discard <n>` in the dashboard to remove the
+task's worktree and branch.
+
+Pre-per-project global stores (`~/.forge/tasks/`, `~/.forge/worktrees/`, `~/.forge/meta/`)
+are left untouched and are no longer read.
