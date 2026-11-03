@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {
   checkpointCommit,
@@ -11,6 +12,7 @@ import {
   mergeWorktree,
   removeWorktree,
 } from '../../src/core/worktree.js';
+import { canonicalizePath } from '../../src/core/paths.js';
 import { initGitRepo, type TestRepo } from '../helpers/git.js';
 import { tempDir } from '../helpers/temp.js';
 
@@ -36,6 +38,24 @@ describe('worktree isolation', () => {
     assert.equal(fs.existsSync(info.path), true);
     assert.equal(info.baseBranch, 'main');
     assert.ok(info.baseRef.length > 0);
+    assert.equal(path.basename(path.dirname(info.path)), 'worktrees');
+    // Windows CI runners report an 8.3 short home directory (RUNNER~1), while
+    // worktree paths are canonicalized to the long form. Compare canonically.
+    const projectDir = canonicalizePath(path.dirname(path.dirname(info.path)));
+    const projectsRoot = canonicalizePath(path.join(os.homedir(), '.forge', 'projects'));
+    assert.equal(path.dirname(projectDir), projectsRoot);
+  });
+
+  it('keeps worktrees in per-directory project folders', t => {
+    const first = initGitRepo(t, 'forge-worktree-project-a-');
+    const second = initGitRepo(t, 'forge-worktree-project-b-');
+    const firstTask = createTaskWorktree(t, first, 'First project');
+    const secondTask = createTaskWorktree(t, second, 'Second project');
+
+    const firstProjectDir = path.dirname(path.dirname(firstTask.info.path));
+    const secondProjectDir = path.dirname(path.dirname(secondTask.info.path));
+    assert.notEqual(firstProjectDir, secondProjectDir);
+    assert.equal(fs.existsSync(path.join(firstProjectDir, 'project.json')), true);
   });
 
   it('checkpoints changes and reports a diff', async t => {

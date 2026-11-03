@@ -68,7 +68,7 @@ git push -u origin feat/my-change
 - Never push directly to `main`; no `--amend`, `--no-verify`, `reset --hard`, or
   force-push. Hooks run normally.
 - Forge-managed task branches are `agent/task-*` in worktrees under
-  `~/.forge/worktrees/`. Merge them only through dashboard `/merge <n>` or
+  `~/.forge/projects/<key>/worktrees/`. Merge them only through dashboard `/merge <n>` or
   `mergeWorktree()`; never hand-merge or commit into them.
 
 ## Publishing a release (npm)
@@ -188,13 +188,18 @@ npm `gitHead` must all agree. Code merged after a tag waits for the next release
 - Default model comes from `DEFAULT_MODEL_ID` (`core/models.ts`, used by the UI picker
   and headless runs) while `MODEL` (`core/constants.ts`) is used for compaction and the
   sub-agent. Changing "the model" in one place leaves the other stale.
-- Keep module imports side-effect free. `core/state.ts` creates `~/.forge/meta` lazily on
-  the first write, and `core/todos.ts` creates the sessions directory before saving.
-  Don't let tests or demos touch real task/session data.
-- Storage: interactive sessions in `.agent-sessions/` under the cwd; session meta in
-  `~/.forge/meta/meta.json`; task state in `~/.forge/tasks/`; worktrees in
-  `~/.forge/worktrees/`; config + API key in `~/.forge/config.json`. Never commit any
-  of these (`.env`, `.forge/`, `.agent-sessions/` are gitignored).
+- Keep module imports side-effect free. `core/paths.ts` only computes paths; the project
+  folder and `project.json` are created lazily on the first write, `core/state.ts` creates
+  the meta directory lazily, and `core/todos.ts` creates the sessions directory before
+  saving. Don't let tests or demos touch real task/session data.
+- Storage: interactive sessions in `.agent-sessions/` under the cwd; everything else is
+  scoped to the directory Forge was opened in, under
+  `~/.forge/projects/<key>/` where `<key>` is `<slug>-<hash12>` derived from the canonical
+  path: `tasks/` (task index, logs, per-task state), `worktrees/`, `meta/meta.json`
+  (session titles/model choices), and `project.json` (exact path). Config + API key stay
+  global in `~/.forge/config.json`. Legacy `~/.forge/{tasks,worktrees,meta}` are left
+  untouched and ignored. Never commit any of these (`.env`, `.forge/`, `.agent-sessions/`
+  are gitignored).
 - `dist/` is generated and gitignored — never edit it directly.
 - Git tests create per-test repositories under a temporary `HOME`/`TMP`; the runner
   removes them afterwards. Tests must be run from the repo root.

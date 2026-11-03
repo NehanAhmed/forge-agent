@@ -73,15 +73,23 @@ describe('conversation state', () => {
     assert.equal(await accessor.load(), null);
   });
 
-  it('stores session titles and model choices', () => {
-    saveSessionTitle('session-meta', 'My session', 'model-a');
-    saveSessionTitle('session-meta', 'Ignored title update', 'model-b');
+  it('stores session titles and model choices per project', t => {
+    const root = tempDir(t, 'forge-meta-');
+    const firstMeta = path.join(root, 'first', 'meta');
+    const secondMeta = path.join(root, 'second', 'meta');
 
-    assert.equal(getSessionTitle('session-meta'), 'My session');
-    assert.equal(getSessionModel('session-meta'), 'model-b');
-    const meta = listSessionMeta().find(entry => entry.id === 'session-meta');
+    saveSessionTitle('session-meta', 'My session', 'model-a', firstMeta);
+    saveSessionTitle('session-meta', 'Ignored title update', 'model-b', firstMeta);
+
+    assert.equal(getSessionTitle('session-meta', firstMeta), 'My session');
+    assert.equal(getSessionModel('session-meta', firstMeta), 'model-b');
+    const meta = listSessionMeta(firstMeta).find(entry => entry.id === 'session-meta');
     assert.ok(meta);
     assert.equal(meta.title, 'My session');
-    assert.equal(getSessionTitle('does-not-exist'), null);
+    assert.equal(getSessionTitle('does-not-exist', firstMeta), null);
+
+    // A different project must not see the first project's sessions.
+    assert.deepEqual(listSessionMeta(secondMeta), []);
+    assert.equal(getSessionTitle('session-meta', secondMeta), null);
   });
 });

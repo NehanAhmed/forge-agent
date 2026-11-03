@@ -11,6 +11,7 @@ import { createBudget } from '../../src/core/budget.js';
 import { createTask, isValidTransition, validateStatusTransition } from '../../src/core/task.js';
 import { TaskManager } from '../../src/core/task-manager.js';
 import { saveTaskIndex, loadTaskIndex, appendTaskLog, loadTaskLog } from '../../src/core/persistence.js';
+import { getProjectPaths } from '../../src/core/paths.js';
 import { isAllowlistedCommand, executeWithPolicy } from '../../src/core/approvals.js';
 import { createTools } from '../../src/tools/definitions.js';
 import { runAgentHeadless } from '../../src/core/headless.js';
@@ -746,6 +747,34 @@ describe('Security & Hygiene', () => {
     const found = loaded.tasks.find(t => t.id === 'persist_test');
     assert.ok(found);
     assert.equal(found.goal, 'Test goal');
+  });
+
+  it('scopes task indexes to the directory Forge was opened in', async t => {
+    const firstRepo = createTempDir('forge-project-a-');
+    const secondRepo = createTempDir('forge-project-b-');
+    const first = new TaskManager({ concurrency: 0, repoCwd: firstRepo });
+    const second = new TaskManager({ concurrency: 0, repoCwd: secondRepo });
+    t.after(async () => {
+      await first.shutdown({ graceMs: 0 });
+      await second.shutdown({ graceMs: 0 });
+    });
+
+    const firstTask = first.create('First project task', { isolation: 'shared' });
+    second.create('Second project task', { isolation: 'shared' });
+
+    await first.shutdown({ graceMs: 0 });
+    await second.shutdown({ graceMs: 0 });
+
+    const firstIndex = loadTaskIndex(getProjectPaths(firstRepo).tasksDir);
+    const secondIndex = loadTaskIndex(getProjectPaths(secondRepo).tasksDir);
+    assert.deepEqual(
+      firstIndex?.tasks.map(task => task.id),
+      [firstTask.id],
+    );
+    assert.deepEqual(
+      secondIndex?.tasks.map(task => task.goal),
+      ['Second project task'],
+    );
   });
 
   it('logs append and load correctly', () => {

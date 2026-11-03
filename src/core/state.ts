@@ -4,26 +4,26 @@ import type { StateAccessor, ConversationState } from '@openrouter/agent';
 import type { Message } from '../types/index.js';
 import { compactIfNeeded, DEFAULT_COMPACTION_CONFIG } from './compaction.js';
 import { loadTodos, saveTodos, mergeTodosIntoState, extractTodosFromState } from './todos.js';
+import { ensureProjectPaths, getProjectPaths } from './paths.js';
 type SessionMetaEntry = { id: string; title: string; createdAt: number; modelId?: string };
 
-import os from 'os';
+// Interactive sessions stay project-local. Task sessions always receive an
+// explicit state directory from the task manager (under the project tasks dir).
+const getSessionsDir = (): string => path.join(process.cwd(), '.agent-sessions');
 
-// For backward compatibility: interactive sessions use project-local .agent-sessions
-// Task sessions will use ~/.forge/tasks/<taskId>/ (to be implemented in Phase 3)
-const getSessionsDir = (taskId?: string): string => {
-  if (taskId) {
-    // Task sessions use home directory
-    return path.join(os.homedir(), '.forge', 'tasks', taskId);
-  }
-  // Legacy interactive sessions use current directory
-  return path.join(process.cwd(), '.agent-sessions');
-};
+function getMetaDir(metaDir?: string): string {
+  return metaDir ?? getProjectPaths().metaDir;
+}
 
-const META_SESSION_DIR = path.join(os.homedir(), '.forge', 'meta');
-const META_FILE = path.join(META_SESSION_DIR, 'meta.json');
-function ensureMetaDir(): void {
-  if (!fs.existsSync(META_SESSION_DIR)) {
-    fs.mkdirSync(META_SESSION_DIR, { recursive: true });
+function getMetaFile(metaDir?: string): string {
+  return path.join(getMetaDir(metaDir), 'meta.json');
+}
+
+function ensureMetaDir(metaDir?: string): void {
+  if (metaDir === undefined) ensureProjectPaths();
+  const dir = getMetaDir(metaDir);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
 }
 export type SessionSummary = {
@@ -186,17 +186,18 @@ export function stateToMessages(state: ConversationState): Message[] {
 
 export { compactIfNeeded, DEFAULT_COMPACTION_CONFIG, type CompactionConfig } from './compaction.js';
 
-function readMeta(): SessionMetaEntry[] {
-  if (!fs.existsSync(META_FILE)) return [];
+function readMeta(metaDir?: string): SessionMetaEntry[] {
+  const metaFile = getMetaFile(metaDir);
+  if (!fs.existsSync(metaFile)) return [];
   try {
-    return JSON.parse(fs.readFileSync(META_FILE, 'utf-8'));
+    return JSON.parse(fs.readFileSync(metaFile, 'utf-8'));
   } catch {
     return [];
   }
 }
 
-export function saveSessionTitle(sessionId: string, title: string, modelId?: string) {
-  const meta = readMeta();
+export function saveSessionTitle(sessionId: string, title: string, modelId?: string, metaDir?: string) {
+  const meta = readMeta(metaDir);
   const existingIndex = meta.findIndex(m => m.id === sessionId);
   if (existingIndex === -1) {
     meta.push({ id: sessionId, title, createdAt: Date.now(), modelId });
@@ -204,18 +205,18 @@ export function saveSessionTitle(sessionId: string, title: string, modelId?: str
     const entry = meta[existingIndex];
     if (entry) entry.modelId = modelId;
   }
-  ensureMetaDir();
-  fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2));
+  ensureMetaDir(metaDir);
+  fs.writeFileSync(getMetaFile(metaDir), JSON.stringify(meta, null, 2));
 }
 
-export function getSessionTitle(sessionId: string): string | null {
-  return readMeta().find(m => m.id === sessionId)?.title ?? null;
+export function getSessionTitle(sessionId: string, metaDir?: string): string | null {
+  return readMeta(metaDir).find(m => m.id === sessionId)?.title ?? null;
 }
 
-export function getSessionModel(sessionId: string): string | null {
-  return readMeta().find(m => m.id === sessionId)?.modelId ?? null;
+export function getSessionModel(sessionId: string, metaDir?: string): string | null {
+  return readMeta(metaDir).find(m => m.id === sessionId)?.modelId ?? null;
 }
 
-export function listSessionMeta(): SessionMetaEntry[] {
-  return readMeta();
+export function listSessionMeta(metaDir?: string): SessionMetaEntry[] {
+  return readMeta(metaDir);
 }
