@@ -1,8 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import type { Task } from './task.js';
 import type { LogEntry } from './context.js';
+import { getProjectPaths } from './paths.js';
 
 export interface TaskIndex {
   version: number;
@@ -10,23 +10,28 @@ export interface TaskIndex {
 }
 
 const TASK_INDEX_VERSION = 2;
-const DEFAULT_TASKS_DIR = path.join(os.homedir(), '.forge', 'tasks');
 
-function ensureTasksDir(dir = DEFAULT_TASKS_DIR): void {
+// Task data is scoped to the directory Forge was opened in. Explicit `tasksDir`
+// arguments stay supported for tests and embedders.
+function getDefaultTasksDir(): string {
+  return getProjectPaths().tasksDir;
+}
+
+function ensureTasksDir(dir = getDefaultTasksDir()): void {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
 }
 
-function getTaskIndexPath(dir = DEFAULT_TASKS_DIR): string {
+function getTaskIndexPath(dir = getDefaultTasksDir()): string {
   return path.join(dir, 'tasks.json');
 }
 
-function getTaskLogPath(taskId: string, dir = DEFAULT_TASKS_DIR): string {
+function getTaskLogPath(taskId: string, dir = getDefaultTasksDir()): string {
   return path.join(dir, `${taskId}.log.jsonl`);
 }
 
-function getTaskDir(taskId: string, dir = DEFAULT_TASKS_DIR): string {
+function getTaskDir(taskId: string, dir = getDefaultTasksDir()): string {
   return path.join(dir, taskId);
 }
 
@@ -57,8 +62,7 @@ function backupTaskIndex(indexPath: string, reason: string): void {
 }
 
 export function loadTaskIndex(tasksDir?: string): TaskIndex | null {
-  const dir = tasksDir ?? DEFAULT_TASKS_DIR;
-  ensureTasksDir(dir);
+  const dir = tasksDir ?? getDefaultTasksDir();
   const indexPath = getTaskIndexPath(dir);
 
   if (!fs.existsSync(indexPath)) {
@@ -104,7 +108,7 @@ export function loadTaskIndex(tasksDir?: string): TaskIndex | null {
 }
 
 export function saveTaskIndex(index: TaskIndex, tasksDir?: string): void {
-  const dir = tasksDir ?? DEFAULT_TASKS_DIR;
+  const dir = tasksDir ?? getDefaultTasksDir();
   ensureTasksDir(dir);
   const indexPath = getTaskIndexPath(dir);
   const content = JSON.stringify(index, null, 2);
@@ -112,7 +116,7 @@ export function saveTaskIndex(index: TaskIndex, tasksDir?: string): void {
 }
 
 export function appendTaskLog(taskId: string, entry: LogEntry, tasksDir?: string): void {
-  const dir = tasksDir ?? DEFAULT_TASKS_DIR;
+  const dir = tasksDir ?? getDefaultTasksDir();
   ensureTasksDir(dir);
   const logPath = getTaskLogPath(taskId, dir);
   const line = JSON.stringify(entry) + '\n';
@@ -127,7 +131,7 @@ export function loadTaskLog(
   taskId: string,
   opts: { fromSeq?: number; limit?: number; tasksDir?: string } = {},
 ): LogEntry[] {
-  const dir = opts.tasksDir ?? DEFAULT_TASKS_DIR;
+  const dir = opts.tasksDir ?? getDefaultTasksDir();
   const logPath = getTaskLogPath(taskId, dir);
   if (!fs.existsSync(logPath)) return [];
   try {
@@ -154,7 +158,7 @@ export function loadTaskLog(
 }
 
 export function ensureTaskDir(taskId: string, tasksDir?: string): string {
-  const dir = tasksDir ?? DEFAULT_TASKS_DIR;
+  const dir = tasksDir ?? getDefaultTasksDir();
   const taskDir = getTaskDir(taskId, dir);
   if (!fs.existsSync(taskDir)) {
     fs.mkdirSync(taskDir, { recursive: true });
@@ -171,7 +175,7 @@ function isMissingPathError(error: unknown): boolean {
 }
 
 export function deleteTaskStorage(taskId: string, tasksDir?: string): void {
-  const dir = tasksDir ?? DEFAULT_TASKS_DIR;
+  const dir = tasksDir ?? getDefaultTasksDir();
   const logPath = getTaskLogPath(taskId, dir);
   try {
     // No existsSync check: unlink is atomic and a concurrent removal surfaces

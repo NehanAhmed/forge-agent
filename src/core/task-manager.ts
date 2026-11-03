@@ -17,6 +17,7 @@ import {
 } from './persistence.js';
 import { runAgentHeadless } from './headless.js';
 import { createStateAccessor } from './state.js';
+import { getProjectPaths } from './paths.js';
 import { createBudget } from './budget.js';
 import { getClient } from './client.js';
 import {
@@ -114,7 +115,9 @@ export class TaskManager extends EventEmitter {
     this.concurrency = opts.concurrency ?? 2;
     this.repoCwd = opts.repoCwd ?? process.cwd();
     this.customCallModel = opts.callModel;
-    this.tasksDir = opts.tasksDir;
+    // Task state belongs to the directory this manager was opened in. Tests and
+    // embedders can still override the location explicitly.
+    this.tasksDir = opts.tasksDir ?? getProjectPaths(this.repoCwd).tasksDir;
     this.treeLimits = opts.treeLimits ?? {
       maxDepth: 2,
       maxChildrenPerTask: 4,

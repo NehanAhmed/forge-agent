@@ -38,6 +38,14 @@ describe('task persistence', () => {
     assert.equal(loadTaskIndex(tasksDir), null);
   });
 
+  it('does not create the tasks directory on a read', t => {
+    const root = tempDir(t, 'forge-persist-lazy-');
+    const tasksDir = path.join(root, 'tasks');
+
+    assert.equal(loadTaskIndex(tasksDir), null);
+    assert.equal(fs.existsSync(tasksDir), false);
+  });
+
   it('migrates a version 1 index to version 2', t => {
     const tasksDir = tempDir(t, 'forge-persist-v1-');
     const root = createTask('root', 'Root');
