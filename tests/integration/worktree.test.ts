@@ -12,6 +12,7 @@ import {
   mergeWorktree,
   removeWorktree,
 } from '../../src/core/worktree.js';
+import { canonicalizePath } from '../../src/core/paths.js';
 import { initGitRepo, type TestRepo } from '../helpers/git.js';
 import { tempDir } from '../helpers/temp.js';
 
@@ -38,10 +39,11 @@ describe('worktree isolation', () => {
     assert.equal(info.baseBranch, 'main');
     assert.ok(info.baseRef.length > 0);
     assert.equal(path.basename(path.dirname(info.path)), 'worktrees');
-    assert.equal(
-      path.dirname(path.dirname(info.path)).startsWith(path.join(os.homedir(), '.forge', 'projects') + path.sep),
-      true,
-    );
+    // Windows CI runners report an 8.3 short home directory (RUNNER~1), while
+    // worktree paths are canonicalized to the long form. Compare canonically.
+    const projectDir = canonicalizePath(path.dirname(path.dirname(info.path)));
+    const projectsRoot = canonicalizePath(path.join(os.homedir(), '.forge', 'projects'));
+    assert.equal(path.dirname(projectDir), projectsRoot);
   });
 
   it('keeps worktrees in per-directory project folders', t => {
