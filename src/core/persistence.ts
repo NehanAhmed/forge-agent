@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import type { Task } from './task.js';
 import type { LogEntry } from './context.js';
-import { getProjectPaths } from './paths.js';
+import { ensureProjectPaths, getProjectPaths } from './paths.js';
 
 export interface TaskIndex {
   version: number;
@@ -108,6 +108,7 @@ export function loadTaskIndex(tasksDir?: string): TaskIndex | null {
 }
 
 export function saveTaskIndex(index: TaskIndex, tasksDir?: string): void {
+  if (tasksDir === undefined) ensureProjectPaths();
   const dir = tasksDir ?? getDefaultTasksDir();
   ensureTasksDir(dir);
   const indexPath = getTaskIndexPath(dir);
@@ -116,6 +117,7 @@ export function saveTaskIndex(index: TaskIndex, tasksDir?: string): void {
 }
 
 export function appendTaskLog(taskId: string, entry: LogEntry, tasksDir?: string): void {
+  if (tasksDir === undefined) ensureProjectPaths();
   const dir = tasksDir ?? getDefaultTasksDir();
   ensureTasksDir(dir);
   const logPath = getTaskLogPath(taskId, dir);
@@ -158,6 +160,7 @@ export function loadTaskLog(
 }
 
 export function ensureTaskDir(taskId: string, tasksDir?: string): string {
+  if (tasksDir === undefined) ensureProjectPaths();
   const dir = tasksDir ?? getDefaultTasksDir();
   const taskDir = getTaskDir(taskId, dir);
   if (!fs.existsSync(taskDir)) {

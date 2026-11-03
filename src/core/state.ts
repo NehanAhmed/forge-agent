@@ -4,7 +4,7 @@ import type { StateAccessor, ConversationState } from '@openrouter/agent';
 import type { Message } from '../types/index.js';
 import { compactIfNeeded, DEFAULT_COMPACTION_CONFIG } from './compaction.js';
 import { loadTodos, saveTodos, mergeTodosIntoState, extractTodosFromState } from './todos.js';
-import { getProjectPaths } from './paths.js';
+import { ensureProjectPaths, getProjectPaths } from './paths.js';
 type SessionMetaEntry = { id: string; title: string; createdAt: number; modelId?: string };
 
 // Interactive sessions stay project-local. Task sessions always receive an
@@ -20,6 +20,7 @@ function getMetaFile(metaDir?: string): string {
 }
 
 function ensureMetaDir(metaDir?: string): void {
+  if (metaDir === undefined) ensureProjectPaths();
   const dir = getMetaDir(metaDir);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });

@@ -17,7 +17,7 @@ import {
 } from './persistence.js';
 import { runAgentHeadless } from './headless.js';
 import { createStateAccessor } from './state.js';
-import { getProjectPaths } from './paths.js';
+import { ensureProjectPaths, getProjectPaths } from './paths.js';
 import { createBudget } from './budget.js';
 import { getClient } from './client.js';
 import {
@@ -213,6 +213,9 @@ export class TaskManager extends EventEmitter {
   }
 
   private save(): void {
+    // Record the exact directory this project folder belongs to alongside the
+    // first persisted task.
+    ensureProjectPaths(this.repoCwd);
     const index: TaskIndex = {
       version: 2,
       tasks: Array.from(this.tasks.values()),

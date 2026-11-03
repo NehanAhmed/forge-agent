@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {
   checkpointCommit,
@@ -36,6 +37,23 @@ describe('worktree isolation', () => {
     assert.equal(fs.existsSync(info.path), true);
     assert.equal(info.baseBranch, 'main');
     assert.ok(info.baseRef.length > 0);
+    assert.equal(path.basename(path.dirname(info.path)), 'worktrees');
+    assert.equal(
+      path.dirname(path.dirname(info.path)).startsWith(path.join(os.homedir(), '.forge', 'projects') + path.sep),
+      true,
+    );
+  });
+
+  it('keeps worktrees in per-directory project folders', t => {
+    const first = initGitRepo(t, 'forge-worktree-project-a-');
+    const second = initGitRepo(t, 'forge-worktree-project-b-');
+    const firstTask = createTaskWorktree(t, first, 'First project');
+    const secondTask = createTaskWorktree(t, second, 'Second project');
+
+    const firstProjectDir = path.dirname(path.dirname(firstTask.info.path));
+    const secondProjectDir = path.dirname(path.dirname(secondTask.info.path));
+    assert.notEqual(firstProjectDir, secondProjectDir);
+    assert.equal(fs.existsSync(path.join(firstProjectDir, 'project.json')), true);
   });
 
   it('checkpoints changes and reports a diff', async t => {

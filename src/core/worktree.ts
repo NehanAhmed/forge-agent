@@ -1,30 +1,25 @@
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
+import { canonicalizePath, ensureProjectPaths, getForgeHome, getProjectPaths } from './paths.js';
 
 const GIT_TIMEOUT = 30_000;
-const WORKTREES_DIR = path.join(os.homedir(), '.forge', 'worktrees');
 
-function normalizePath(target: string): string {
-  const resolved = path.resolve(target);
-  // `fs.realpathSync` only resolves symlinks; it leaves Windows 8.3 short
-  // names untouched (C:\PROGRA~1 stays short). `fs.realpathSync.native` asks
-  // the OS for the final path, which expands short names to their long form.
-  // That matters because `os.homedir()` frequently returns a short name
-  // (e.g. C:\Users\RUNNER~1) on Windows CI runners while git reports the long
-  // form (C:\Users\runneradmin). Keeping every path in the OS-canonical form
-  // is what makes the managed-path guard and orphan detection reliable.
-  try {
-    return fs.realpathSync.native(resolved);
-  } catch {
-    try {
-      return fs.realpathSync(resolved);
-    } catch {
-      // Path may not exist yet (e.g. WORKTREES_DIR before first use).
-      return resolved;
-    }
+// Worktrees live under the project folder for the directory Forge was opened
+// in: ~/.forge/projects/<key>/worktrees/<taskId>. Canonicalizing every path
+// keeps 8.3 short names, junctions, symlinks, and drive-letter case aligned
+// with what git reports.
+const normalizePath = canonicalizePath;
+
+function getWorktreesDir(repoCwd: string): string {
+  return getProjectPaths(repoCwd).worktreesDir;
+}
+
+function sameManagedPath(a: string, b: string): boolean {
+  if (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b) {
+    return true;
   }
+  return sameIdentity(a, b);
 }
 
 /**
@@ -45,18 +40,27 @@ function sameIdentity(a: string, b: string): boolean {
 }
 
 function isManagedWorktreePath(target: string): boolean {
-  const managed = normalizePath(WORKTREES_DIR);
-  const candidate = normalizePath(target);
-  const relative = path.relative(managed, candidate);
-  if (relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+  const parent = normalizePath(path.dirname(path.resolve(target)));
+
+  // Legacy global worktrees stay recognized (but are otherwise ignored) so old
+  // task branches can still be removed safely, and so pre-existing guards keep
+  // their contract.
+  const legacyRoot = normalizePath(path.join(getForgeHome(), 'worktrees'));
+  if (sameManagedPath(parent, legacyRoot)) {
     return true;
   }
 
-  // Fall back to directory identity for spellings that survive normalization
-  // (for example a symlinked temp dir, or a path whose target does not exist
-  // so realpath cannot canonicalize it). Worktrees always live directly under
-  // the managed root, so comparing the parent directory is sufficient.
-  return sameIdentity(path.dirname(path.resolve(target)), path.resolve(WORKTREES_DIR));
+  // Current layout: ~/.forge/projects/<key>/worktrees/<taskId>. Worktrees
+  // always sit directly under a project's worktrees root.
+  const projectsRoot = normalizePath(path.join(getForgeHome(), 'projects'));
+  const relative = path.relative(projectsRoot, parent);
+  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+    return false;
+  }
+  const segments = relative.split(path.sep);
+  const leaf = segments[1] ?? '';
+  const isWorktreesDir = process.platform === 'win32' ? leaf.toLowerCase() === 'worktrees' : leaf === 'worktrees';
+  return segments.length === 2 && isWorktreesDir;
 }
 
 export interface WorktreeInfo {
@@ -117,9 +121,10 @@ export function createWorktree(taskId: string, goal: string, repoCwd: string): W
     throw new Error('Not a git repository');
   }
 
-  // Ensure worktrees directory exists
-  if (!fs.existsSync(WORKTREES_DIR)) {
-    fs.mkdirSync(WORKTREES_DIR, { recursive: true });
+  // Ensure this project's folder and worktrees directory exist
+  const worktreesDir = ensureProjectPaths(repoCwd).worktreesDir;
+  if (!fs.existsSync(worktreesDir)) {
+    fs.mkdirSync(worktreesDir, { recursive: true });
   }
 
   const shortId = taskId.replace('task_', '').slice(0, 8);
@@ -129,7 +134,7 @@ export function createWorktree(taskId: string, goal: string, repoCwd: string): W
   // `os.homedir()` frequently returns an 8.3 short name (RUNNER~1) while git
   // reports the resolved long name; keeping both sides in the same form is
   // what makes the managed-path guard and orphan detection reliable.
-  const worktreePath = normalizePath(path.join(WORKTREES_DIR, taskId));
+  const worktreePath = normalizePath(path.join(worktreesDir, taskId));
 
   // Get current HEAD and branch
   const baseRef = runGit(['rev-parse', 'HEAD'], repoCwd);
@@ -401,6 +406,7 @@ export function listOrphanedWorktrees(repoCwd: string, knownTaskIds: Set<string>
   }
 
   const orphans: string[] = [];
+  const managedRoot = normalizePath(getWorktreesDir(repoCwd));
 
   try {
     const output = execFileSync('git', ['worktree', 'list', '--porcelain'], {
@@ -416,6 +422,11 @@ export function listOrphanedWorktrees(repoCwd: string, knownTaskIds: Set<string>
       } else if (line.startsWith('branch ')) {
         const branch = line.slice('branch '.length).trim().replace('refs/heads/', '');
         if (branch.startsWith('agent/') && isManagedWorktreePath(currentPath)) {
+          // Only this directory's project folder is relevant here. Another
+          // checkout of the same repository may have its own project folder.
+          const parent = normalizePath(path.dirname(path.resolve(currentPath)));
+          if (!sameManagedPath(parent, managedRoot)) continue;
+
           // Check if this worktree belongs to a known task
           const taskId = path.basename(currentPath);
           if (!knownTaskIds.has(taskId)) {
