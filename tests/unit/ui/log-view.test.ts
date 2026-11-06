@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildLogLines, windowLogLines } from '../../../src/ui/log-view.js';
+import { cellWidth } from '../../../src/ui/text.js';
 import type { LogEntry } from '../../../src/core/context.js';
 
 const base = Date.UTC(2026, 0, 1, 12, 0, 0);
@@ -10,16 +11,45 @@ function entry(seq: number, type: LogEntry['type'], content: string): LogEntry {
 }
 
 describe('UI Log View', () => {
-  it('emits exactly one sanitized line per entry in compact mode', () => {
+  it('sanitizes and collapses explicit newlines in compact mode', () => {
     const lines = buildLogLines(
       [entry(1, 'tool_call', 'read_file\nsrc/a.ts'), entry(2, 'assistant', '\u001B[31mhello\u001B[0m')],
-      { width: 30, timestamps: true, verbose: false, ascii: false },
+      { width: 40, timestamps: true, verbose: false, ascii: false },
     );
 
     assert.equal(lines.length, 2);
-    assert.ok(lines[0]!.text.includes('read_file src/a.ts'));
+    assert.equal(lines[0]!.text, 'read_file src/a.ts');
     assert.equal(lines[1]!.text, 'hello');
     assert.equal(lines[0]!.kind, 'entry');
+  });
+
+  it('wraps long content in compact mode instead of truncating it', () => {
+    const content = 'alpha beta gamma delta epsilon';
+    const lines = buildLogLines([entry(1, 'assistant', content)], {
+      width: 16,
+      timestamps: false,
+      verbose: false,
+      ascii: true,
+    });
+
+    assert.ok(lines.length > 1);
+    assert.equal(
+      lines.every(line => cellWidth(line.text) <= 14),
+      true,
+    );
+    assert.equal(
+      lines.every(line => !line.text.includes('…')),
+      true,
+    );
+    assert.equal(
+      lines
+        .map(line => line.text)
+        .join('')
+        .replace(/\s/g, ''),
+      content.replace(/\s/g, ''),
+    );
+    assert.equal(lines[0]!.kind, 'entry');
+    assert.equal(lines[1]!.kind, 'continuation');
   });
 
   it('wraps entries in verbose mode with a stable prefix', () => {

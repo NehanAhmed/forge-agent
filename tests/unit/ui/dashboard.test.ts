@@ -61,6 +61,13 @@ class MockClient implements TaskClient {
   async resumeTask(): Promise<Task> {
     throw new Error('not implemented');
   }
+  async setTaskPolicy(id: string, policy: Task['policy']): Promise<Task> {
+    const target = this.tasks.find(item => item.id === id);
+    if (!target) throw new Error(`Task not found: ${id}`);
+    target.policy = policy;
+    this.handlers.forEach(handler => handler({ type: 'task:policy', taskId: id, policy, task: target } as TaskEvent));
+    return target;
+  }
   async listApprovals(): Promise<Approval[]> {
     return this.approvals;
   }
@@ -146,6 +153,27 @@ describe('Dashboard', () => {
       const moved = instance.lastFrame() ?? '';
       assert.ok(moved.includes('log for Older goal'));
       assert.ok(!moved.includes('log for Newer goal'));
+    } finally {
+      instance.unmount();
+    }
+  });
+
+  it('toggles manual and auto approvals with p from the list', async () => {
+    const target = task('task_a', 'Policy goal', '1', 1_000);
+    const client = new MockClient([target]);
+    const instance = render(React.createElement(Dashboard, { client }));
+
+    try {
+      await wait(100);
+      instance.stdin.write('\t'); // list focus
+      await wait(50);
+      instance.stdin.write('p');
+      assert.ok(await waitForFrame(instance, 'auto approval'));
+      assert.equal(target.policy, 'auto_in_worktree');
+
+      instance.stdin.write('p');
+      assert.ok(await waitForFrame(instance, 'manual approval'));
+      assert.equal(target.policy, 'ask');
     } finally {
       instance.unmount();
     }

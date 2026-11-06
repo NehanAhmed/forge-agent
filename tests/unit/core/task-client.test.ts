@@ -43,6 +43,10 @@ describe('in-process task client', () => {
     assert.deepEqual(await client.getLog(task.id), []);
     assert.deepEqual(await client.listApprovals(), []);
 
+    const switched = await client.setTaskPolicy(task.id, 'auto_in_worktree');
+    assert.equal(switched.policy, 'auto_in_worktree');
+    assert.equal((await client.getTask(task.id))?.policy, 'auto_in_worktree');
+
     await assert.rejects(() => client.resumeTask(task.id), /Cannot resume task/);
     await client.cancelTask(task.id);
     assert.equal((await client.getTask(task.id))?.status, 'cancelled');

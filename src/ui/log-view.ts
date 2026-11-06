@@ -1,5 +1,5 @@
 import type { LogEntry } from '../core/context.js';
-import { sanitizeText, truncateCells, wrapCells, cellWidth } from './text.js';
+import { sanitizeText, wrapCells, cellWidth } from './text.js';
 import { timeLabel } from './format.js';
 import { logGlyph } from './theme.js';
 
@@ -62,8 +62,9 @@ function mergeAssistantEntries(entries: LogEntry[]): LogEntry[] {
 }
 
 /**
- * Turn log entries into display lines. Compact mode emits exactly one line per
- * entry; verbose mode wraps long content while keeping a stable prefix.
+ * Turn log entries into display lines. Both modes wrap to the available width
+ * so a narrow terminal never truncates content. Compact mode collapses explicit
+ * newlines into spaces (one paragraph per entry); verbose mode preserves them.
  */
 export function buildLogLines(entries: LogEntry[], options: LogViewOptions): LogDisplayLine[] {
   const width = Math.max(1, Math.floor(options.width));
@@ -78,28 +79,19 @@ export function buildLogLines(entries: LogEntry[], options: LogViewOptions): Log
     const prefixWidth = cellWidth(prefix);
     const available = Math.max(1, width - prefixWidth);
     const content = sanitizeText(entry.content).replace(/\r\n?/g, '\n').replace(/\t/g, '  ');
+    const paragraph = options.verbose ? content : content.replace(/\n/g, ' ');
+    const wrapped = wrapCells(paragraph, available);
+    const indent = ' '.repeat(prefixWidth);
 
-    if (options.verbose) {
-      const wrapped = wrapCells(content, available);
-      const indent = ' '.repeat(prefixWidth);
-      wrapped.forEach((text, index) => {
-        lines.push({
-          seq: entry.seq,
-          entry,
-          kind: index === 0 ? 'entry' : 'continuation',
-          prefix: index === 0 ? prefix : indent,
-          text,
-        });
-      });
-    } else {
+    wrapped.forEach((text, index) => {
       lines.push({
         seq: entry.seq,
         entry,
-        kind: 'entry',
-        prefix,
-        text: truncateCells(content.replace(/\n/g, ' '), available),
+        kind: index === 0 ? 'entry' : 'continuation',
+        prefix: index === 0 ? prefix : indent,
+        text,
       });
-    }
+    });
   }
 
   return lines.length > maxLines ? lines.slice(lines.length - maxLines) : lines;

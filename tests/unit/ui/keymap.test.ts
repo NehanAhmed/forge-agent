@@ -80,9 +80,15 @@ describe('UI Keymap', () => {
     assert.deepEqual(resolveAction('', key({ return: true }), context), { type: 'none' });
 
     // Printable characters belong to the composer, not to dashboard shortcuts.
-    for (const letter of ['f', 'v', 'k', 'j', '?', 'q', 'a', 'd']) {
+    for (const letter of ['f', 'v', 'k', 'j', 'p', '?', 'q', 'a', 'd']) {
       assert.deepEqual(resolveAction(letter, key(), context), { type: 'none' });
     }
+  });
+
+  it('toggles approval policy from list and detail focus only', () => {
+    assert.deepEqual(resolveAction('p', key(), { focus: 'list', overlay: null }), { type: 'togglePolicy' });
+    assert.deepEqual(resolveAction('p', key(), { focus: 'detail', overlay: null }), { type: 'togglePolicy' });
+    assert.deepEqual(resolveAction('p', key(), { focus: 'input', overlay: null }), { type: 'none' });
   });
 
   it('cycles focus and blurs predictably', () => {

@@ -24,6 +24,7 @@ const HELP_ROWS: Array<[string, string]> = [
   ['d', 'delete task'],
   ['D', 'show diff'],
   ['s', 'filter: all / active / attention'],
+  ['p', 'toggle manual / auto approvals'],
   ['f', 'follow log tail'],
   ['v', 'compact / verbose log'],
   ['/', 'focus input for a command'],

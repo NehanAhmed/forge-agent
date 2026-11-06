@@ -51,7 +51,7 @@ These affect the dashboard only; chat ignores them.
 | `ui.ascii` | `false` | Use plain ASCII glyphs instead of Unicode |
 | `ui.timestamps` | `true` | Show a timestamp on each log line |
 | `ui.showCost` | `true` | Show accumulated cost in task details |
-| `ui.compactLog` | `true` | One line per log entry; `false` starts in wrapped mode |
+| `ui.compactLog` | `true` | Wrap long entries and collapse their newlines; `false` preserves line breaks |
 | `ui.alternateScreen` | `true` | Run the dashboard in the alternate terminal buffer |
 | `ui.logWindow` | `2000` | Log entries kept per task for display |
 

@@ -60,6 +60,22 @@ describe('UI Pure Modules', () => {
       });
     });
 
+    it('parses /policy and the /auto and /manual shortcuts', () => {
+      assert.deepEqual(parseCommand('/policy 2 auto'), {
+        kind: 'policy',
+        target: '2',
+        policy: 'auto_in_worktree',
+      });
+      assert.deepEqual(parseCommand('/policy #2 manual'), { kind: 'policy', target: '2', policy: 'ask' });
+      assert.deepEqual(parseCommand('/policy 2 read-only'), { kind: 'policy', target: '2', policy: 'read_only' });
+      assert.deepEqual(parseCommand('/auto 3'), { kind: 'policy', target: '3', policy: 'auto_in_worktree' });
+      assert.deepEqual(parseCommand('/manual 3'), { kind: 'policy', target: '3', policy: 'ask' });
+      assert.deepEqual(parseCommand('/policy 3'), { kind: 'policy_toggle', target: '3' });
+      assert.equal(parseCommand('/policy 3 unsafe').kind, 'unknown');
+      assert.equal(parseCommand('/policy').kind, 'unknown');
+      assert.equal(parseCommand('/auto').kind, 'unknown');
+    });
+
     it('rejects unknown /new flags and unsupported policies', () => {
       assert.equal(parseCommand('/new --unknown Run tests').kind, 'unknown');
       assert.equal(parseCommand('/new --policy unsafe Run tests').kind, 'unknown');

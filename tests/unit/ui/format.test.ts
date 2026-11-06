@@ -1,6 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatCost, formatDuration, joinMeta, statusLabel, taskElapsed, timeLabel } from '../../../src/ui/format.js';
+import {
+  formatCost,
+  formatDuration,
+  joinMeta,
+  policyLabel,
+  statusLabel,
+  taskElapsed,
+  timeLabel,
+} from '../../../src/ui/format.js';
 import { createTask } from '../../../src/core/task.js';
 
 describe('UI formatting', () => {
@@ -39,6 +47,9 @@ describe('UI formatting', () => {
     assert.equal(formatCost(0.5), '$0.50');
     assert.equal(statusLabel('waiting_approval'), 'waiting');
     assert.equal(statusLabel('done'), 'done');
+    assert.equal(policyLabel('ask'), 'manual approval');
+    assert.equal(policyLabel('auto_in_worktree'), 'auto approval');
+    assert.equal(policyLabel('read_only'), 'read-only');
     assert.equal(joinMeta(['1m', undefined, false, '2.5k']), '1m · 2.5k');
     assert.match(timeLabel(Date.UTC(2026, 0, 1, 12, 34, 56)), /^\d{2}:\d{2}:\d{2}$/);
   });
