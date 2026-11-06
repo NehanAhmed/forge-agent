@@ -660,6 +660,39 @@ describe('Phase 5: Approvals Inbox & Policies', () => {
     assert.equal(approved, true);
     assert.equal(task.status, 'running');
   });
+
+  it('switches approval policy at runtime and enforces safety guards', async () => {
+    const dir = createTempDir('forge-policy-switch-');
+    const manager = new TaskManager({
+      concurrency: 0,
+      repoCwd: dir,
+      tasksDir: path.join(dir, 'tasks'),
+    });
+
+    try {
+      const task = manager.create('Switchable task');
+      assert.equal(task.policy, 'ask');
+
+      manager.setPolicy(task.id, 'auto_in_worktree');
+      assert.equal(manager.get(task.id)?.policy, 'auto_in_worktree');
+
+      manager.setPolicy(task.id, 'ask');
+      assert.equal(manager.get(task.id)?.policy, 'ask');
+
+      const shared = manager.create('Shared task', { isolation: 'shared' });
+      assert.throws(() => manager.setPolicy(shared.id, 'auto_in_worktree'), /shared isolation/);
+
+      const readOnly = manager.create('Read-only task', { readOnly: true });
+      assert.equal(readOnly.policy, 'read_only');
+      assert.throws(() => manager.setPolicy(readOnly.id, 'ask'), /read-only/);
+
+      const active = manager.create('Active task');
+      active.status = 'running';
+      assert.throws(() => manager.setPolicy(active.id, 'read_only'), /active/);
+    } finally {
+      await manager.shutdown({ graceMs: 0 });
+    }
+  });
 });
 
 describe('Phase 6: Git Worktree Isolation & Review', () => {

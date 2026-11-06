@@ -12,6 +12,7 @@ export interface TaskEventMap {
   'approval:requested': { approvalId: string; taskId: string; approval: Approval };
   'approval:resolved': { approvalId: string; taskId: string; decision: 'approve' | 'deny' };
   'task:review': { taskId: string; reviewState: ReviewState };
+  'task:policy': { taskId: string; policy: ApprovalPolicy; task: Task };
   'task:deleted': { taskId: string };
 }
 
@@ -30,6 +31,7 @@ export interface TaskClient {
   getLog(id: string, opts?: { fromSeq?: number; limit?: number }): Promise<LogEntry[]>;
   cancelTask(id: string): Promise<void>;
   resumeTask(id: string): Promise<Task>;
+  setTaskPolicy(id: string, policy: ApprovalPolicy): Promise<Task>;
   listApprovals(): Promise<Approval[]>;
   resolveApproval(approvalId: string, decision: 'approve' | 'deny'): Promise<void>;
   getDiff(id: string): Promise<TaskDiff>;
@@ -54,6 +56,7 @@ export class InProcessTaskClient implements TaskClient {
     this.manager.on('approval:requested', data => this.emit('approval:requested', data));
     this.manager.on('approval:resolved', data => this.emit('approval:resolved', data));
     this.manager.on('task:review', data => this.emit('task:review', data));
+    this.manager.on('task:policy', data => this.emit('task:policy', data));
     this.manager.on('task:deleted', data => this.emit('task:deleted', data));
   }
 
@@ -89,6 +92,10 @@ export class InProcessTaskClient implements TaskClient {
 
   async resumeTask(id: string): Promise<Task> {
     return this.manager.resume(id);
+  }
+
+  async setTaskPolicy(id: string, policy: ApprovalPolicy): Promise<Task> {
+    return this.manager.setPolicy(id, policy);
   }
 
   async listApprovals(): Promise<Approval[]> {

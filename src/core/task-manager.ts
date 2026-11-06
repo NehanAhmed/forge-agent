@@ -60,6 +60,7 @@ export type TaskEvent =
   | 'approval:requested'
   | 'approval:resolved'
   | 'task:review'
+  | 'task:policy'
   | 'task:deleted';
 
 const TREE_BUDGET_LIMITS = {
@@ -299,6 +300,37 @@ export class TaskManager extends EventEmitter {
 
   get(id: string): Task | undefined {
     return this.tasks.get(id);
+  }
+
+  /**
+   * Change a task's approval policy while it is queued, running, or finished.
+   * Running tasks see the change immediately because the agent context reads
+   * the policy through a getter. Read-only is a one-way safety guarantee, so a
+   * read-only task cannot be widened; automatic approvals require a worktree.
+   */
+  setPolicy(id: string, policy: ApprovalPolicy): Task {
+    const task = this.tasks.get(id);
+    if (!task) {
+      throw new Error(`Task not found: ${id}`);
+    }
+    if (task.policy === policy) {
+      return task;
+    }
+    if (task.policy === 'read_only') {
+      throw new Error(`Task #${task.displayId} is read-only; its policy cannot be changed.`);
+    }
+    if (policy === 'read_only' && (task.status === 'running' || task.status === 'waiting_approval')) {
+      throw new Error(`Task #${task.displayId} is active; cancel it before making it read-only.`);
+    }
+    if (policy === 'auto_in_worktree' && task.isolation !== 'worktree') {
+      throw new Error(`Task #${task.displayId} uses shared isolation; automatic approvals require a worktree task.`);
+    }
+
+    task.policy = policy;
+    this.scheduleSave();
+    this.log(id, { type: 'info', content: `Approval policy set to ${policy}` });
+    this.emit('task:policy', { taskId: id, policy, task });
+    return task;
   }
 
   async spawnChild(parentId: string, goal: string, readOnly?: boolean): Promise<{ id: string; displayId: string }> {
@@ -814,7 +846,11 @@ export class TaskManager extends EventEmitter {
         cwd: task.cwd,
         signal: abort.signal,
         state: createStateAccessor(task.sessionId, getTaskStateDir(taskId, this.tasksDir)),
-        policy: task.policy,
+        // Read through the live task so a policy switch made from the dashboard
+        // applies to the next tool call in this already-running agent loop.
+        get policy() {
+          return task.policy;
+        },
         budget,
         log: entry => this.log(taskId, entry),
         requestApproval: req => this.requestApproval(taskId, req),

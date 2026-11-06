@@ -1,9 +1,10 @@
 import { parseTaskRef } from '../core/tree.js';
+import type { ApprovalPolicy } from '../core/context.js';
 
 export interface CommandOptions {
   readOnly?: boolean;
   shared?: boolean;
-  policy?: 'ask' | 'auto_in_worktree' | 'read_only';
+  policy?: ApprovalPolicy;
 }
 
 export type ParsedCommand =
@@ -19,11 +20,33 @@ export type ParsedCommand =
   | { kind: 'discard'; target: string }
   | { kind: 'delete'; target: string }
   | { kind: 'resume'; target: string }
+  | { kind: 'policy'; target: string; policy: ApprovalPolicy }
+  | { kind: 'policy_toggle'; target: string }
   | { kind: 'collapse'; target: string }
   | { kind: 'expand'; target: string }
   | { kind: 'help' }
   | { kind: 'quit' }
   | { kind: 'unknown'; error: string };
+
+const POLICY_USAGE = 'Usage: /policy <n> [ask|auto|read_only]. /policy <n> toggles manual and auto.';
+
+function parsePolicy(value: string | undefined): ApprovalPolicy | null {
+  switch (value?.toLowerCase()) {
+    case 'ask':
+    case 'manual':
+      return 'ask';
+    case 'auto':
+    case 'auto_in_worktree':
+    case 'auto-in-worktree':
+      return 'auto_in_worktree';
+    case 'read_only':
+    case 'read-only':
+    case 'readonly':
+      return 'read_only';
+    default:
+      return null;
+  }
+}
 
 export function parseCommand(input: string): ParsedCommand {
   const trimmed = input.trim();
@@ -98,6 +121,21 @@ export function parseCommand(input: string): ParsedCommand {
     return { kind: 'resume', target };
   }
 
+  if (cmd === 'policy') {
+    const target = parts[1] ? parseTaskRef(parts[1]) : null;
+    if (!target) return { kind: 'unknown', error: POLICY_USAGE };
+    if (!parts[2]) return { kind: 'policy_toggle', target };
+    const policy = parsePolicy(parts[2]);
+    if (!policy) return { kind: 'unknown', error: POLICY_USAGE };
+    return { kind: 'policy', target, policy };
+  }
+
+  if (cmd === 'auto' || cmd === 'manual') {
+    const target = parts[1] ? parseTaskRef(parts[1]) : null;
+    if (!target) return { kind: 'unknown', error: `Usage: /${cmd} <n>` };
+    return { kind: 'policy', target, policy: cmd === 'auto' ? 'auto_in_worktree' : 'ask' };
+  }
+
   if (cmd === 'collapse') {
     const target = parts[1] ? parseTaskRef(parts[1]) : null;
     if (!target) return { kind: 'unknown', error: 'Usage: /collapse <n>' };
@@ -121,11 +159,11 @@ export function parseCommand(input: string): ParsedCommand {
       } else if (flag === '--shared') {
         options.shared = true;
       } else if (flag === '--policy') {
-        const val = parts[idx + 1];
-        if (val !== 'ask' && val !== 'auto_in_worktree' && val !== 'read_only') {
+        const policy = parsePolicy(parts[idx + 1]);
+        if (!policy) {
           return { kind: 'unknown', error: usage };
         }
-        options.policy = val;
+        options.policy = policy;
         idx++;
       } else {
         return { kind: 'unknown', error: usage };

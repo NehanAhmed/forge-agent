@@ -1,4 +1,5 @@
 import type { TaskStatus } from '../core/task.js';
+import type { ApprovalPolicy } from '../core/context.js';
 
 /** Compact elapsed/duration label: 3s, 1m 04s, 2h 05m. */
 export function formatDuration(ms: number): string {
@@ -43,6 +44,17 @@ export function statusLabel(status: TaskStatus): string {
       return 'failed';
     case 'cancelled':
       return 'cancelled';
+  }
+}
+
+export function policyLabel(policy: ApprovalPolicy): string {
+  switch (policy) {
+    case 'ask':
+      return 'manual approval';
+    case 'auto_in_worktree':
+      return 'auto approval';
+    case 'read_only':
+      return 'read-only';
   }
 }
 

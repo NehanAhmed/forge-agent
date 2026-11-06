@@ -70,6 +70,7 @@ export function useTaskStore(client: TaskClient): TaskStore {
       switch (event.type) {
         case 'task:created':
         case 'task:status':
+        case 'task:policy':
           setTasks(current => upsertTask(current, event.task));
           break;
         case 'task:usage':

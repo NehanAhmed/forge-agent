@@ -69,11 +69,15 @@ chat to pick another one.
 | `/diff <n>` | Show the task's diff |
 | `/merge <n>` / `/discard <n>` | Merge the branch, or delete it and its worktree |
 | `/resume <n>` / `/cancel <n>` | Resume an interrupted task, or cancel a task and its children |
+| `/policy <n> [ask\|auto\|read_only]` | Set a task's approval policy; omit the mode to toggle manual/auto |
+| `/auto <n>` / `/manual <n>` | Shortcut for auto or manual approvals |
 | `/help` / `/quit` | Show commands / leave |
 
 Keys: `↑`/`↓` to move, `←`/`→` to fold a task tree, `Enter` to open a task, `a` for
-approvals, `Tab` to switch between list and input, `?` for the full key map, `q` to quit.
-Destructive actions ask for a `y`/`n` confirmation.
+approvals, `p` to toggle manual/auto approvals, `Tab` to switch between list and input,
+`?` for the full key map, `q` to quit. Long log lines wrap to the terminal width, and the
+view scrolls by height, so nothing is clipped horizontally. Destructive actions ask for a
+`y`/`n` confirmation.
 
 ### Chat
 
@@ -101,8 +105,10 @@ session. Commands: `/help`, `/clear`, `/new`, `/sessions`, `/models`, `/model <i
 
 - Shell commands and file writes go through an approval policy: `ask` (default),
   `auto_in_worktree` (writes inside the task's worktree and allowlisted test/build commands
-  are auto-approved), or `read_only` (read and search tools only). The chat UI and dashboard
-  both ask; read-only tasks simply cannot write.
+  are auto-approved), or `read_only` (read and search tools only). Switch a task at runtime
+  with `p` in the dashboard or `/policy <n> [ask|auto|read_only]`; automatic approvals need
+  worktree isolation, and read-only tasks cannot be widened. The chat UI and dashboard both
+  ask; read-only tasks simply cannot write.
 - Commands run with your user permissions. There is no sandbox, so read a command before
   you approve it.
 - Task branches must be `agent/task-*`, and merges only happen from the dashboard after a

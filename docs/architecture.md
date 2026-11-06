@@ -84,6 +84,12 @@ Every write and exec tool goes through `executeWithPolicy` in
 Read tools and `git_status`/`git_diff` never prompt. In chat, approval is a `y`/`n` prompt.
 In the dashboard, requests land in the approvals inbox (`a`).
 
+The policy can be switched at runtime with `p` or `/policy <n> [ask|auto|read_only]`.
+`TaskManager.setPolicy` writes the task and the running agent reads the policy through a
+live getter, so the next tool call follows the new mode. `auto_in_worktree` requires
+worktree isolation, a read-only task cannot be widened, and an active task cannot be made
+read-only; those combinations return actionable errors instead of silently downgrading.
+
 ### Worktrees
 
 Tasks with `isolation: 'worktree'` (the default for write-capable work) get:

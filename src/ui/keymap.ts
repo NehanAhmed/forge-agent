@@ -52,6 +52,7 @@ export type DashboardAction =
   | { type: 'deleteTask' }
   | { type: 'diffTask' }
   | { type: 'cycleFilter' }
+  | { type: 'togglePolicy' }
   | { type: 'focusInput'; seed?: string }
   | { type: 'scroll'; delta: number; page?: boolean }
   | { type: 'scrollEdge'; edge: 'first' | 'last' }
@@ -156,6 +157,7 @@ export function resolveAction(input: string, key: KeyLike, context: KeyContext):
   if (input === 'd' || key.delete) return { type: 'deleteTask' };
   if (input === 'D' || (input === 'd' && key.shift)) return { type: 'diffTask' };
   if (input === 's') return { type: 'cycleFilter' };
+  if (input === 'p') return { type: 'togglePolicy' };
   if (input === 'f') return { type: 'toggleFollow' };
   if (input === 'v') return { type: 'toggleVerbose' };
   if (input === 'q') return { type: 'quit' };
@@ -172,6 +174,7 @@ function resolveDetailAction(input: string, key: KeyLike): DashboardAction {
   if (key.end || input === 'G') return { type: 'scrollEdge', edge: 'last' };
   if (input === 'f') return { type: 'toggleFollow' };
   if (input === 'v') return { type: 'toggleVerbose' };
+  if (input === 'p') return { type: 'togglePolicy' };
   if (key.return) return { type: 'enterFollowUp' };
   return NONE;
 }

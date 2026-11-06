@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput, usePaste, useWindowSize } from 'ink';
 import type { Approval } from '../../../core/task-manager.js';
+import type { ApprovalPolicy } from '../../../core/context.js';
 import type { Task } from '../../../core/task.js';
 import type { TaskClient } from '../../../core/task-client.js';
 import { getConfig } from '../../../core/config.js';
@@ -21,6 +22,7 @@ import {
   type TaskFilter,
 } from '../../../ui/selection.js';
 import { parseCommand } from '../../../ui/parser.js';
+import { policyLabel } from '../../../ui/format.js';
 import { sanitizeText } from '../../../ui/text.js';
 import { createGlyphs, createTheme } from '../../../ui/theme.js';
 import { buildTree, getVisibleRows } from '../../../ui/tree-builder.js';
@@ -313,6 +315,24 @@ export function Dashboard({ client }: DashboardProps) {
         notify('error', errorText(error));
       }
     })();
+  }
+
+  async function applyPolicy(task: Task, policy: ApprovalPolicy) {
+    try {
+      const updated = await client.setTaskPolicy(task.id, policy);
+      notify('info', `#${updated.displayId}: ${policyLabel(updated.policy)}`);
+    } catch (error: unknown) {
+      notify('error', errorText(error));
+    }
+  }
+
+  function togglePolicy(task: Task) {
+    if (task.policy === 'read_only') {
+      notify('error', `#${task.displayId} is read-only; its policy cannot be changed.`);
+      return;
+    }
+    const next: ApprovalPolicy = task.policy === 'auto_in_worktree' ? 'ask' : 'auto_in_worktree';
+    void applyPolicy(task, next);
   }
 
   function requestMerge(task: Task) {
@@ -636,6 +656,12 @@ export function Dashboard({ client }: DashboardProps) {
         case 'resume':
           requestResume(requireTask(parsed.target));
           break;
+        case 'policy':
+          await applyPolicy(requireTask(parsed.target), parsed.policy);
+          break;
+        case 'policy_toggle':
+          togglePolicy(requireTask(parsed.target));
+          break;
         case 'diff':
           openDiff(requireTask(parsed.target));
           break;
@@ -741,6 +767,10 @@ export function Dashboard({ client }: DashboardProps) {
         break;
       case 'resumeTask':
         if (selectedTask) requestResume(selectedTask);
+        else notify('error', 'Select a task first.');
+        break;
+      case 'togglePolicy':
+        if (selectedTask) togglePolicy(selectedTask);
         else notify('error', 'Select a task first.');
         break;
       case 'mergeTask':
@@ -930,8 +960,8 @@ export function Dashboard({ client }: DashboardProps) {
       : focus === 'input'
         ? `enter run${dot}/ commands${dot}tab list${dot}esc list`
         : focus === 'list'
-          ? `${nav} select${dot}${lr} fold${dot}enter open${dot}d del${dot}x discard${dot}m merge${dot}c cancel${dot}a approvals${dot}? help`
-          : `${nav} scroll${dot}f follow${dot}v verbose${dot}enter follow-up${dot}esc back`;
+          ? `${nav} select${dot}${lr} fold${dot}enter open${dot}p policy${dot}d del${dot}x discard${dot}m merge${dot}c cancel${dot}a approvals${dot}? help`
+          : `${nav} scroll${dot}f follow${dot}v verbose${dot}p policy${dot}enter follow-up${dot}esc back`;
 
   return (
     <Box flexDirection="column" width={columns} height={rows} overflow="hidden">

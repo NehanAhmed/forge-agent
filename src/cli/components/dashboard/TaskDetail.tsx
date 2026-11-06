@@ -6,7 +6,7 @@ import type { Glyphs, Theme } from '../../../ui/theme.js';
 import { logColor } from '../../../ui/theme.js';
 import { getStatusGlyph } from '../../../ui/status-glyphs.js';
 import { cellWidth, truncateCells } from '../../../ui/text.js';
-import { formatCost, formatDuration, statusLabel, taskElapsed } from '../../../ui/format.js';
+import { formatCost, formatDuration, policyLabel, statusLabel, taskElapsed } from '../../../ui/format.js';
 import { InputBar } from './InputBar.js';
 
 export interface TaskDetailProps {
@@ -74,6 +74,7 @@ export function TaskDetail({
     formatCost(task.usage.cost),
     task.worktree?.branch ?? '',
     review,
+    policyLabel(task.policy),
     !follow ? 'paused' : '',
     hasNewBelow && !follow ? 'new below' : '',
   ].filter(Boolean);
