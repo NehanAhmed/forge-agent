@@ -1,4 +1,5 @@
 import { execFileSync } from 'child_process';
+import { createHash } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { canonicalizePath, ensureProjectPaths, getForgeHome, getProjectPaths } from './paths.js';
@@ -116,6 +117,36 @@ function sanitizeSlug(text: string): string {
     .slice(0, 30);
 }
 
+/**
+ * Stable, unique branch suffix for a task.
+ *
+ * Task ids are `task_<Date.now()>_<random>`. Truncating the timestamp only
+ * yields eight leading digits, which stay identical for every task created
+ * inside the same ~100-second window, so two tasks with the same goal used to
+ * collide on one branch and the second creation failed. Use the random tail
+ * instead (or a hash for ids without one) so every task gets its own branch.
+ */
+function branchSuffix(taskId: string): string {
+  const segments = taskId
+    .replace(/^task[_-]?/i, '')
+    .split(/[^a-z0-9]+/i)
+    .filter(Boolean);
+  const tail = segments[segments.length - 1] ?? '';
+  if (tail.length >= 6) {
+    return tail.slice(0, 8).toLowerCase();
+  }
+  return createHash('sha256').update(taskId).digest('hex').slice(0, 8);
+}
+
+function branchExists(repoCwd: string, branch: string): boolean {
+  try {
+    runGit(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], repoCwd);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function createWorktree(taskId: string, goal: string, repoCwd: string): WorktreeInfo {
   if (!isGitRepo(repoCwd)) {
     throw new Error('Not a git repository');
@@ -127,7 +158,7 @@ export function createWorktree(taskId: string, goal: string, repoCwd: string): W
     fs.mkdirSync(worktreesDir, { recursive: true });
   }
 
-  const shortId = taskId.replace('task_', '').slice(0, 8);
+  const shortId = branchSuffix(taskId);
   const slug = sanitizeSlug(goal);
   const branch = `agent/task-${shortId}-${slug}`;
   // Normalize the path so `info.path` is canonical. On Windows CI runners
@@ -162,8 +193,22 @@ export function createWorktree(taskId: string, goal: string, repoCwd: string): W
     );
   }
 
-  // Create the worktree
-  runGit(['worktree', 'add', worktreePath, '-b', branch], repoCwd);
+  // Create the worktree. A task can be retried after its worktree directory was
+  // deleted while the branch (and any checkpoint commits) remained behind: a
+  // manual delete, a failed cleanup, or a discard that stopped after removing
+  // the directory. Drop the stale registration and reattach to the existing
+  // branch instead of asking git to create a duplicate, which it refuses.
+  try {
+    runGit(['worktree', 'prune'], repoCwd);
+  } catch {
+    // Best effort; creation can still succeed without pruning.
+  }
+
+  if (branchExists(repoCwd, branch)) {
+    runGit(['worktree', 'add', worktreePath, branch], repoCwd);
+  } else {
+    runGit(['worktree', 'add', worktreePath, '-b', branch], repoCwd);
+  }
 
   // The worktree now exists, so normalizePath can resolve 8.3 short names,
   // junctions, and symlinks to the canonical form git will also report.

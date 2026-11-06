@@ -16,8 +16,12 @@ import { canonicalizePath } from '../../src/core/paths.js';
 import { initGitRepo, type TestRepo } from '../helpers/git.js';
 import { tempDir } from '../helpers/temp.js';
 
-function createTaskWorktree(t: Parameters<typeof tempDir>[0], repo: TestRepo, goal: string) {
-  const taskId = `task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+function createTaskWorktree(
+  t: Parameters<typeof tempDir>[0],
+  repo: TestRepo,
+  goal: string,
+  taskId = `task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+) {
   const info = createWorktree(taskId, goal, repo.dir);
   t.after(() => {
     try {
@@ -44,6 +48,51 @@ describe('worktree isolation', () => {
     const projectDir = canonicalizePath(path.dirname(path.dirname(info.path)));
     const projectsRoot = canonicalizePath(path.join(os.homedir(), '.forge', 'projects'));
     assert.equal(path.dirname(projectDir), projectsRoot);
+  });
+
+  it('creates worktrees for tasks whose ids share a timestamp prefix', t => {
+    const repo = initGitRepo(t, 'forge-worktree-collision-');
+    // Task ids are `task_<Date.now()>_<random>`. The leading millisecond digits
+    // only change every 100 seconds, so two tasks created moments apart expose
+    // the random suffix as the only unique part of the branch name.
+    const window = Math.floor(Date.now() / 100_000) * 100_000;
+    const firstTask = createTaskWorktree(t, repo, 'Same goal', `task_${window}_aaaaaaaa`);
+    const secondTask = createTaskWorktree(t, repo, 'Same goal', `task_${window + 1}_bbbbbbbb`);
+
+    assert.notEqual(firstTask.info.branch, secondTask.info.branch);
+    assert.equal(fs.existsSync(firstTask.info.path), true);
+    assert.equal(fs.existsSync(secondTask.info.path), true);
+  });
+
+  it('reuses the task branch when the worktree directory is gone', t => {
+    const repo = initGitRepo(t, 'forge-worktree-retry-');
+    const taskId = `task_${Date.now()}_deadbeef`;
+    const first = createWorktree(taskId, 'Resume task', repo.dir);
+    t.after(() => {
+      try {
+        removeWorktree(first, repo.dir, true);
+      } catch {
+        // Already removed by this test.
+      }
+    });
+
+    // Work that was already checkpointed must survive the recovery.
+    fs.writeFileSync(path.join(first.path, 'kept.txt'), 'kept\n');
+    checkpointCommit(first, 'task: work before removal');
+
+    // Simulate the worktree directory disappearing while the branch and git's
+    // worktree registration stay behind (manual deletion, interrupted cleanup,
+    // or a failed discard). Git still believes the path is checked out.
+    fs.rmSync(first.path, { recursive: true, force: true });
+    const listed = repo.git('worktree', 'list');
+    assert.match(listed, new RegExp(path.basename(first.path)));
+    assert.match(listed, /prunable/);
+
+    const second = createWorktree(taskId, 'Resume task', repo.dir);
+
+    assert.equal(second.branch, first.branch);
+    assert.equal(fs.existsSync(second.path), true);
+    assert.equal(fs.readFileSync(path.join(second.path, 'kept.txt'), 'utf-8').trim(), 'kept');
   });
 
   it('keeps worktrees in per-directory project folders', t => {
