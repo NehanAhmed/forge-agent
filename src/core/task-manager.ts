@@ -38,6 +38,7 @@ export interface CreateTaskOpts {
   readOnly?: boolean;
   cwd?: string;
   budget?: Budget;
+  modelId?: string;
 }
 
 export interface Approval {
@@ -269,6 +270,7 @@ export class TaskManager extends EventEmitter {
       depth: 0,
       treeId: id,
       displayId,
+      modelId: opts.modelId,
     });
 
     const budget = opts.budget ?? createBudget(TREE_BUDGET_LIMITS);
@@ -360,6 +362,7 @@ export class TaskManager extends EventEmitter {
       depth: parent.depth + 1,
       treeId,
       displayId,
+      modelId: parent.modelId,
     });
 
     this.tasks.set(id, task);
@@ -863,6 +866,7 @@ export class TaskManager extends EventEmitter {
       // Run the agent headlessly
       const result = await runAgentHeadless(goal, ctx, {
         maxSteps: 50,
+        modelId: task.modelId,
       });
 
       // Update task with result

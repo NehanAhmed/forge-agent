@@ -91,6 +91,21 @@ describe('UI Keymap', () => {
     assert.deepEqual(resolveAction('p', key(), { focus: 'input', overlay: null }), { type: 'none' });
   });
 
+  it('opens the model picker from list and detail focus only', () => {
+    assert.deepEqual(resolveAction('M', key(), { focus: 'list', overlay: null }), { type: 'openModels' });
+    assert.deepEqual(resolveAction('M', key(), { focus: 'detail', overlay: null }), { type: 'openModels' });
+    assert.deepEqual(resolveAction('M', key(), { focus: 'input', overlay: null }), { type: 'none' });
+  });
+
+  it('lets the model picker own its keys while it is open', () => {
+    const context = { focus: 'list' as const, overlay: 'models' as const };
+    for (const input of ['', 'j', 'k', 'M', '?', 'q']) {
+      assert.deepEqual(resolveAction(input, key(), context), { type: 'none' });
+    }
+    assert.deepEqual(resolveAction('', key({ escape: true }), context), { type: 'none' });
+    assert.deepEqual(resolveAction('', key({ downArrow: true }), context), { type: 'none' });
+  });
+
   it('cycles focus and blurs predictably', () => {
     assert.deepEqual(resolveAction('', key({ tab: true }), { focus: 'input', overlay: null }), {
       type: 'cycleFocus',

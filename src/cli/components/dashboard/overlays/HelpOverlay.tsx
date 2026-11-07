@@ -17,6 +17,7 @@ const HELP_ROWS: Array<[string, string]> = [
   ['enter', 'open detail / enter follow-up conversation'],
   ['esc', 'back / exit follow-up / close overlay'],
   ['a', 'approvals inbox'],
+  ['M', 'choose model'],
   ['c', 'cancel task tree'],
   ['r', 'resume failed task'],
   ['m', 'merge reviewed task'],

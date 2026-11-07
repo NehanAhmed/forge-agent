@@ -14,6 +14,7 @@ A complete file looks like this:
 
 ```json
 {
+  "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
   "children": {
     "maxDepth": 2,
     "maxPerTask": 4,
@@ -31,6 +32,16 @@ A complete file looks like this:
 ```
 
 Settings apply to the next `forge` process you start.
+
+## Model
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `model` | `nvidia/nemotron-3-ultra-550b-a55b:free` | Model used for new dashboard tasks |
+
+Pick a model from the dashboard with `/models` or `M`; the selection is written here so it
+survives restarts. Chat keeps its per-session choice separately in the project's
+`meta/meta.json`.
 
 ## Child task limits
 

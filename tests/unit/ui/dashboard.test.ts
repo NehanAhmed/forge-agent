@@ -8,6 +8,10 @@ import type { TaskEvent, TaskClient } from '../../../src/core/task-client.js';
 import type { LogEntry } from '../../../src/core/context.js';
 import type { Approval } from '../../../src/core/task-manager.js';
 import type { TaskDiff, MergeResult } from '../../../src/core/worktree.js';
+import { CODING_MODELS, DEFAULT_MODEL_ID } from '../../../src/core/models.js';
+import { updateConfig } from '../../../src/core/config.js';
+
+type CreateTaskOpts = NonNullable<Parameters<TaskClient['createTask']>[1]>;
 
 function task(id: string, goal: string, displayId: string, createdAt: number): Task {
   const created = createTask(id, goal, { displayId });
@@ -24,6 +28,7 @@ class MockClient implements TaskClient {
   readonly approvals: Approval[] = [];
   readonly resolved: Array<{ approvalId: string; decision: 'approve' | 'deny' }> = [];
   readonly followUps: Array<{ id: string; message: string }> = [];
+  readonly created: Array<{ goal: string; opts?: CreateTaskOpts }> = [];
 
   constructor(tasks: Task[]) {
     this.tasks = tasks;
@@ -39,7 +44,8 @@ class MockClient implements TaskClient {
     }
   }
 
-  async createTask(goal: string): Promise<Task> {
+  async createTask(goal: string, opts?: CreateTaskOpts): Promise<Task> {
+    this.created.push({ goal, opts });
     const created = task(`task_${this.tasks.length + 1}`, goal, String(this.tasks.length + 1), Date.now());
     this.tasks.push(created);
     return created;
@@ -329,6 +335,59 @@ describe('Dashboard', () => {
       );
     } finally {
       instance.unmount();
+    }
+  });
+
+  it('opens the model picker with M and applies the selection to new tasks', async () => {
+    updateConfig({ model: DEFAULT_MODEL_ID });
+    const client = new MockClient([]);
+    const instance = render(React.createElement(Dashboard, { client }));
+
+    try {
+      await wait(100);
+      instance.stdin.write('\t'); // list focus
+      await wait(50);
+      instance.stdin.write('M');
+      assert.ok(await waitForFrame(instance, 'Select model'));
+      assert.ok((instance.lastFrame() ?? '').includes(CODING_MODELS[0]!.name));
+
+      instance.stdin.write('\u001B[B'); // down arrow
+      await wait(30);
+      instance.stdin.write('\r');
+      assert.ok(await waitForFrame(instance, `Model switched to ${CODING_MODELS[1]!.name}`));
+
+      instance.stdin.write('\t'); // list -> input
+      await wait(30);
+      instance.stdin.write('model task');
+      await wait(30);
+      instance.stdin.write('\r');
+      assert.ok(await waitForFrame(instance, 'Queued #'));
+      assert.equal(client.created.length, 1);
+      assert.equal(client.created[0]!.opts?.modelId, CODING_MODELS[1]!.id);
+    } finally {
+      instance.unmount();
+      updateConfig({ model: DEFAULT_MODEL_ID });
+    }
+  });
+
+  it('opens the model picker with the /models command', async () => {
+    updateConfig({ model: DEFAULT_MODEL_ID });
+    const client = new MockClient([]);
+    const instance = render(React.createElement(Dashboard, { client }));
+
+    try {
+      await wait(100);
+      instance.stdin.write('/models');
+      await wait(30);
+      instance.stdin.write('\r');
+      assert.ok(await waitForFrame(instance, 'Select model'));
+
+      instance.stdin.write('\u001B'); // escape
+      await wait(100);
+      assert.ok(!(instance.lastFrame() ?? '').includes('Select model'));
+    } finally {
+      instance.unmount();
+      updateConfig({ model: DEFAULT_MODEL_ID });
     }
   });
 });

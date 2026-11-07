@@ -1,8 +1,10 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { DEFAULT_MODEL_ID } from './models.js';
 
 export interface ForgeConfig {
+  model: string;
   children: {
     maxDepth: number;
     maxPerTask: number;
@@ -21,6 +23,7 @@ export interface ForgeConfig {
 }
 
 const DEFAULT_CONFIG: ForgeConfig = {
+  model: DEFAULT_MODEL_ID,
   children: {
     maxDepth: 2,
     maxPerTask: 4,
@@ -72,6 +75,7 @@ function atomicWrite(filePath: string, content: string): void {
 export function getConfig(configPath = getConfigPath()): ForgeConfig {
   if (!fs.existsSync(configPath)) {
     return {
+      model: DEFAULT_CONFIG.model,
       children: { ...DEFAULT_CONFIG.children },
       ui: { ...DEFAULT_CONFIG.ui },
     };
@@ -80,6 +84,7 @@ export function getConfig(configPath = getConfigPath()): ForgeConfig {
     const raw = fs.readFileSync(configPath, 'utf-8');
     const parsed = JSON.parse(raw);
     return {
+      model: typeof parsed.model === 'string' && parsed.model.trim() ? parsed.model.trim() : DEFAULT_CONFIG.model,
       children: {
         maxDepth: parsed.children?.maxDepth ?? DEFAULT_CONFIG.children.maxDepth,
         maxPerTask: parsed.children?.maxPerTask ?? DEFAULT_CONFIG.children.maxPerTask,
@@ -104,6 +109,7 @@ export function getConfig(configPath = getConfigPath()): ForgeConfig {
     };
   } catch {
     return {
+      model: DEFAULT_CONFIG.model,
       children: { ...DEFAULT_CONFIG.children },
       ui: { ...DEFAULT_CONFIG.ui },
     };
@@ -113,6 +119,7 @@ export function getConfig(configPath = getConfigPath()): ForgeConfig {
 export function updateConfig(patch: Partial<ForgeConfig>, configPath = getConfigPath()): ForgeConfig {
   const current = getConfig(configPath);
   const updated: ForgeConfig = {
+    model: typeof patch.model === 'string' && patch.model.trim() ? patch.model.trim() : current.model,
     children: { ...current.children, ...patch.children },
     ui: { ...current.ui, ...patch.ui },
   };

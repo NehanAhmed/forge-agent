@@ -18,6 +18,7 @@ describe('task model', () => {
     assert.equal(task.depth, 0);
     assert.equal(task.treeId, 'task_1');
     assert.equal(task.displayId, '1');
+    assert.equal(task.modelId, undefined);
     assert.equal(task.resumable, false);
     assert.deepEqual(task.usage, { inputTokens: 0, outputTokens: 0, cost: 0, requests: 0 });
   });
@@ -32,6 +33,7 @@ describe('task model', () => {
       depth: 2,
       treeId: 'root',
       displayId: '1.2',
+      modelId: 'test/model',
     });
 
     assert.equal(task.sessionId, 'session-2');
@@ -42,6 +44,7 @@ describe('task model', () => {
     assert.equal(task.depth, 2);
     assert.equal(task.treeId, 'root');
     assert.equal(task.displayId, '1.2');
+    assert.equal(task.modelId, 'test/model');
   });
 
   it('allows exactly the documented transitions', () => {

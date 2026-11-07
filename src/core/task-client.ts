@@ -23,7 +23,7 @@ export type TaskEvent = {
 export interface TaskClient {
   createTask(
     goal: string,
-    opts?: { readOnly?: boolean; isolation?: 'worktree' | 'shared'; policy?: ApprovalPolicy },
+    opts?: { readOnly?: boolean; isolation?: 'worktree' | 'shared'; policy?: ApprovalPolicy; modelId?: string },
   ): Promise<Task>;
   sendFollowUp(id: string, message: string): Promise<Task>;
   listTasks(): Promise<Task[]>;
@@ -69,7 +69,7 @@ export class InProcessTaskClient implements TaskClient {
 
   async createTask(
     goal: string,
-    opts?: { readOnly?: boolean; isolation?: 'worktree' | 'shared'; policy?: ApprovalPolicy },
+    opts?: { readOnly?: boolean; isolation?: 'worktree' | 'shared'; policy?: ApprovalPolicy; modelId?: string },
   ): Promise<Task> {
     return this.manager.create(goal, opts);
   }

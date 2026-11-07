@@ -55,8 +55,9 @@ flow`, and press Enter. The task appears in the list with its progress and log; 
 show up in the inbox (`a`). When the task finishes, press Tab (or Esc) to move focus to the
 list, then review it with `D`, merge it with `m`, or discard it with `x`.
 
-The default model is NVIDIA Nemotron 3 Ultra on OpenRouter's free tier. Run `/models` in
-chat to pick another one.
+The default model is NVIDIA Nemotron 3 Ultra on OpenRouter's free tier. Run `/models` (or
+press `M` from the dashboard list) to pick another one. The choice applies to new tasks and
+is saved in `~/.forge/config.json`.
 
 ### Dashboard
 
@@ -71,13 +72,14 @@ chat to pick another one.
 | `/resume <n>` / `/cancel <n>` | Resume an interrupted task, or cancel a task and its children |
 | `/policy <n> [ask\|auto\|read_only]` | Set a task's approval policy; omit the mode to toggle manual/auto |
 | `/auto <n>` / `/manual <n>` | Shortcut for auto or manual approvals |
+| `/models` | Open the model picker |
 | `/help` / `/quit` | Show commands / leave |
 
 Keys: `↑`/`↓` to move, `←`/`→` to fold a task tree, `Enter` to open a task, `a` for
-approvals, `p` to toggle manual/auto approvals, `Tab` to switch between list and input,
-`?` for the full key map, `q` to quit. Long log lines wrap to the terminal width, and the
-view scrolls by height, so nothing is clipped horizontally. Destructive actions ask for a
-`y`/`n` confirmation.
+approvals, `p` to toggle manual/auto approvals, `M` to choose a model, `Tab` to switch
+between list and input, `?` for the full key map, `q` to quit. Long log lines wrap to the
+terminal width, and the view scrolls by height, so nothing is clipped horizontally.
+Destructive actions ask for a `y`/`n` confirmation.
 
 ### Chat
 
