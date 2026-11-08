@@ -1,9 +1,16 @@
-import { stepCountIs } from '@openrouter/agent';
+import { stepCountIs, type ConversationState, type StateAccessor } from '@openrouter/agent';
 import { createTools } from '../tools/definitions.js';
 import { buildSystemPrompt } from '../core/constants.js';
 import type { AgentContext } from '../core/context.js';
 import { DEFAULT_MODEL_ID } from '../core/models.js';
 import { StreamCoalescer } from '../core/stream-buffer.js';
+import {
+  classifyModelError,
+  ModelRetryExhaustedError,
+  withModelRetry,
+  type ClassifiedModelError,
+  type RetryOptions,
+} from '../core/retry.js';
 
 export interface RunResult {
   outcome: 'done' | 'failed' | 'cancelled';
@@ -15,44 +22,102 @@ export interface RunResult {
 export interface HeadlessRunOpts {
   maxSteps?: number;
   modelId?: string;
+  /** Retry overrides for tests and callers that need a different policy. */
+  retry?: RetryOptions;
 }
 
-function isRetryableError(err: any): boolean {
-  const msg = (err?.message ?? String(err)).toLowerCase();
-  const status = err?.status ?? err?.statusCode ?? err?.error?.status;
-  if (status === 429) return true;
-  if (status === 502 || status === 503 || status === 504) return true;
-  if (msg.includes('econnreset') || msg.includes('enotfound') || msg.includes('etimedout')) return true;
-  if (msg.includes('network') && msg.includes('error')) return true;
+type ModelResultInstance = ReturnType<AgentContext['callModel']>;
+type ModelUsage = Awaited<ReturnType<ModelResultInstance['getUsage']>>;
+
+class BudgetExceededError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BudgetExceededError';
+  }
+}
+
+function abortError(signal: AbortSignal): unknown {
+  if (signal.reason instanceof Error) return signal.reason;
+  const error = new Error(typeof signal.reason === 'string' ? signal.reason : 'Operation aborted');
+  error.name = 'AbortError';
+  return error;
+}
+
+async function loadStateQuietly(state: StateAccessor): Promise<ConversationState | null> {
+  try {
+    return await state.load();
+  } catch {
+    return null;
+  }
+}
+
+function messageCount(state: ConversationState | null): number {
+  if (!state) return 0;
+  const messages = (state as { messages?: unknown }).messages;
+  return Array.isArray(messages) ? messages.length : 0;
+}
+
+/**
+ * Detect whether a failed attempt left durable progress behind. When it did,
+ * the retry must resume from that state instead of re-sending the goal (which
+ * would duplicate the user message and could replay tool work).
+ */
+function hasStateProgress(baseline: ConversationState | null, current: ConversationState | null): boolean {
+  if (!current) return false;
+  if (!baseline) return messageCount(current) > 0;
+  if (messageCount(current) > messageCount(baseline)) return true;
+  if (current.previousResponseId !== baseline.previousResponseId) return true;
+  if ((current.pendingToolCalls?.length ?? 0) > 0) return true;
+  if ((current.pendingAsyncTools?.length ?? 0) > 0) return true;
   return false;
 }
 
-function getRetryAfterMs(err: any): number | null {
-  const header = err?.headers?.['retry-after'] ?? err?.error?.headers?.['retry-after'];
-  if (!header) return null;
-  const seconds = Number(header);
-  if (!Number.isNaN(seconds)) return seconds * 1000;
-  const date = Date.parse(header);
-  if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
-  return null;
+async function readUsageQuietly(
+  result: ModelResultInstance | undefined,
+  onError?: (error: unknown) => void,
+): Promise<ModelUsage | null> {
+  if (!result || typeof result.getUsage !== 'function') return null;
+  try {
+    return await result.getUsage();
+  } catch (error) {
+    onError?.(error);
+    return null;
+  }
 }
 
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(signal.reason ?? new Error('Aborted'));
-      return;
-    }
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer);
-        reject(signal.reason ?? new Error('Aborted'));
-      },
-      { once: true },
-    );
-  });
+async function cancelQuietly(result: ModelResultInstance | undefined): Promise<void> {
+  if (!result || typeof result.cancel !== 'function') return;
+  try {
+    await result.cancel();
+  } catch {
+    // Cancellation is best-effort; the retry loop must not fail because of it.
+  }
+}
+
+function formatDelay(ms: number): string {
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${Math.round(ms / 1000)}s`;
+}
+
+function formatErrorDetail(error: ClassifiedModelError): string {
+  return [error.category, error.status, error.code, error.provider].filter(value => value !== undefined).join(' ');
+}
+
+function describeError(error: unknown, classified: ClassifiedModelError): string {
+  if (error instanceof ModelRetryExhaustedError) {
+    return `${classified.message} (after ${error.attempts} attempts)`;
+  }
+  const candidate = error as { error?: { message?: string }; message?: string } | null;
+  return candidate?.error?.message ?? candidate?.message ?? classified.message;
+}
+
+function mapErrorCode(classified: ClassifiedModelError): string {
+  if (classified.category === 'auth' || classified.status === 401 || classified.status === 403) {
+    return 'auth_failure';
+  }
+  if (classified.category === 'rate_limit' || classified.status === 429) {
+    return 'rate_limited';
+  }
+  return classified.retryable ? 'max_retries' : 'fatal';
 }
 
 export async function runAgentHeadless(
@@ -80,126 +145,135 @@ export async function runAgentHeadless(
 
   // Build tools respecting read_only policy
   const tools = createTools(ctx);
+  const baselineState = await loadStateQuietly(ctx.state);
 
-  let lastError: any = null;
-  let retryCount = 0;
-  const maxRetries = 3;
+  const retryOptions: RetryOptions = {
+    ...opts.retry,
+    signal: opts.retry?.signal ?? ctx.signal,
+    onRetry: info => {
+      opts.retry?.onRetry?.(info);
+      ctx.log({
+        type: 'info',
+        content: `Model call failed (attempt ${info.retry}/${info.maxRetries + 1}): ${formatErrorDetail(info.error)} — retrying in ${formatDelay(info.delayMs)}`,
+        metadata: {
+          retry: info.retry,
+          maxRetries: info.maxRetries,
+          delayMs: info.delayMs,
+          category: info.error.category,
+          status: info.error.status,
+          code: info.error.code,
+          provider: info.error.provider,
+        },
+      });
+    },
+  };
 
-  while (retryCount <= maxRetries) {
+  try {
+    const summary = await withModelRetry(async attempt => {
+      if (ctx.signal.aborted) throw abortError(ctx.signal);
+      if (!ctx.budget.canSpend()) {
+        throw new BudgetExceededError('Budget exhausted before model call');
+      }
+
+      // After a failed attempt, resume from persisted progress when the SDK
+      // managed to save it. Otherwise the original goal is still unsent.
+      const currentState = attempt > 1 ? await loadStateQuietly(ctx.state) : null;
+      const input = attempt > 1 && hasStateProgress(baselineState, currentState) ? [] : goal;
+
+      let result: ModelResultInstance | undefined;
+      try {
+        result = ctx.callModel({
+          model: modelId,
+          instructions: buildSystemPrompt(ctx.cwd),
+          input,
+          tools,
+          stopWhen: [stepCountIs(maxSteps)],
+          state: ctx.state,
+          signal: ctx.signal,
+        });
+
+        let summary = '';
+        const stream = new StreamCoalescer({
+          maxChars: 512,
+          maxDelayMs: 120,
+          onFlush: text => ctx.log({ type: 'assistant', content: text }),
+        });
+
+        try {
+          for await (const delta of result.getTextStream()) {
+            if (ctx.signal.aborted) {
+              stream.flush();
+              throw abortError(ctx.signal);
+            }
+            summary += delta;
+            stream.push(delta);
+          }
+          stream.flush();
+        } catch (error) {
+          stream.flush();
+          if (ctx.signal.aborted) throw abortError(ctx.signal);
+          throw error;
+        }
+
+        const finalUsage = await readUsageQuietly(result, error => {
+          ctx.log({ type: 'info', content: `Usage unavailable after model call: ${String(error)}` });
+        });
+        usage.requests += 1;
+        if (finalUsage) {
+          usage.inputTokens += finalUsage.inputTokens ?? 0;
+          usage.outputTokens += finalUsage.outputTokens ?? 0;
+          usage.cost += finalUsage.cost ?? 0;
+        }
+        ctx.budget.record({
+          tokens: (finalUsage?.inputTokens ?? 0) + (finalUsage?.outputTokens ?? 0),
+          cost: finalUsage?.cost ?? 0,
+          requests: 1,
+        });
+
+        return summary;
+      } catch (error) {
+        // Failed attempts still consume a request and whatever tokens the
+        // provider already billed. Record them before the retry decision.
+        const partialUsage = await readUsageQuietly(result);
+        await cancelQuietly(result);
+        usage.requests += 1;
+        if (partialUsage) {
+          usage.inputTokens += partialUsage.inputTokens ?? 0;
+          usage.outputTokens += partialUsage.outputTokens ?? 0;
+          usage.cost += partialUsage.cost ?? 0;
+        }
+        ctx.budget.record({
+          tokens: (partialUsage?.inputTokens ?? 0) + (partialUsage?.outputTokens ?? 0),
+          cost: partialUsage?.cost ?? 0,
+          requests: 1,
+        });
+        throw error;
+      }
+    }, retryOptions);
+
+    return { outcome: 'done', summary: summary || undefined, usage };
+  } catch (error) {
     if (ctx.signal.aborted) {
       return { outcome: 'cancelled', usage };
     }
 
-    try {
-      const result = ctx.callModel({
-        model: modelId,
-        instructions: buildSystemPrompt(ctx.cwd),
-        input: goal,
-        tools,
-        stopWhen: [stepCountIs(maxSteps)],
-        state: ctx.state,
-        signal: ctx.signal,
-      });
-
-      // Collect the full text (summary)
-      let summary = '';
-      const stream = new StreamCoalescer({
-        maxChars: 512,
-        maxDelayMs: 120,
-        onFlush: text => ctx.log({ type: 'assistant', content: text }),
-      });
-      try {
-        for await (const delta of result.getTextStream()) {
-          if (ctx.signal.aborted) {
-            stream.flush();
-            return { outcome: 'cancelled', usage };
-          }
-          summary += delta;
-          stream.push(delta);
-        }
-        stream.flush();
-      } catch (err: any) {
-        stream.flush();
-        if (ctx.signal.aborted) {
-          return { outcome: 'cancelled', usage };
-        }
-        // Stream errors during text collection
-        const errMsg = err?.error?.message ?? err?.message ?? String(err);
-        ctx.log({ type: 'error', content: `Stream failed: ${errMsg}` });
-      }
-
-      // Collect usage
-      const finalUsage = await result.getUsage();
-      usage.inputTokens += finalUsage.inputTokens ?? 0;
-      usage.outputTokens += finalUsage.outputTokens ?? 0;
-      usage.cost += finalUsage.cost ?? 0;
-      usage.requests += 1;
-
-      // Record to budget
-      ctx.budget.record({
-        tokens: (finalUsage.inputTokens ?? 0) + (finalUsage.outputTokens ?? 0),
-        cost: finalUsage.cost ?? 0,
-        requests: 1,
-      });
-
-      return {
-        outcome: 'done',
-        summary: summary || undefined,
-        usage,
-      };
-    } catch (err: any) {
-      lastError = err;
-      usage.requests += 1;
-
-      if (ctx.signal.aborted) {
-        return { outcome: 'cancelled', usage };
-      }
-
-      if (isRetryableError(err) && retryCount < maxRetries) {
-        retryCount++;
-        const retryAfter = getRetryAfterMs(err);
-        const backoffMs = retryAfter ?? Math.min(1000 * Math.pow(2, retryCount) + Math.random() * 1000, 30_000);
-
-        ctx.log({
-          type: 'info',
-          content: `Retryable error (attempt ${retryCount}/${maxRetries}), retrying in ${Math.round(backoffMs / 1000)}s`,
-          metadata: { retryCount, backoffMs },
-        });
-
-        try {
-          await sleep(backoffMs, ctx.signal);
-        } catch {
-          return { outcome: 'cancelled', usage };
-        }
-        continue;
-      }
-
-      // Fatal or max retries
-      const errMsg = err?.error?.message ?? err?.message ?? String(err);
-      const code =
-        err?.status === 401 || err?.status === 403
-          ? 'auth_failure'
-          : err?.status === 429
-            ? 'rate_limited'
-            : isRetryableError(err)
-              ? 'max_retries'
-              : 'fatal';
-
-      ctx.log({ type: 'error', content: `Agent run failed: ${errMsg}` });
-
+    if (error instanceof BudgetExceededError) {
+      ctx.log({ type: 'error', content: `Agent run stopped: ${error.message}` });
       return {
         outcome: 'failed',
         usage,
-        error: { code, message: errMsg },
+        error: { code: 'budget_exceeded', message: error.message },
       };
     }
-  }
 
-  // Should not reach here, but be safe
-  const errMsg = lastError?.message ?? 'Unknown error after retries';
-  return {
-    outcome: 'failed',
-    usage,
-    error: { code: 'max_retries', message: errMsg },
-  };
+    const classified = error instanceof ModelRetryExhaustedError ? error.classified : classifyModelError(error);
+    const message = describeError(error, classified);
+    ctx.log({ type: 'error', content: `Agent run failed: ${message}` });
+
+    return {
+      outcome: 'failed',
+      usage,
+      error: { code: mapErrorCode(classified), message },
+    };
+  }
 }
