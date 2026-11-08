@@ -28,6 +28,7 @@ type SDKMessage = {
   type?: string;
 };
 
+/** Flatten an SDK message's text parts into a plain string. */
 function extractTextContent(content: unknown): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
@@ -39,6 +40,7 @@ function extractTextContent(content: unknown): string {
   return '';
 }
 
+/** Convert persisted SDK messages into the legacy shape used for summarization. */
 function stateToLegacyMessages(state: ConversationState): Array<{
   role: string;
   content: string | null;
@@ -88,6 +90,7 @@ function stateToLegacyMessages(state: ConversationState): Array<{
   return messages;
 }
 
+/** Convert a legacy message back into the SDK shape used by the compacted state. */
 function legacyToSDKMessage(msg: {
   role: string;
   content: string | null;
@@ -116,14 +119,17 @@ function legacyToSDKMessage(msg: {
   return { role: 'system', content: msg.content ?? '' };
 }
 
+/** Generate a unique id for a compacted message item. */
 function generateId(): string {
   return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
+/** Format a retry delay for compaction log output. */
 function formatRetryDelay(ms: number): string {
   return ms < 1000 ? `${Math.round(ms)}ms` : `${Math.round(ms / 1000)}s`;
 }
 
+/** Build a system item for the compacted message list. */
 function toSystemItem(msg: SDKMessage) {
   return {
     id: generateId(),
@@ -132,6 +138,7 @@ function toSystemItem(msg: SDKMessage) {
   };
 }
 
+/** Build a user item for the compacted message list. */
 function toUserItem(msg: SDKMessage) {
   return {
     id: generateId(),
@@ -140,6 +147,7 @@ function toUserItem(msg: SDKMessage) {
   };
 }
 
+/** Build an assistant item for the compacted message list. */
 function toAssistantItem(msg: SDKMessage) {
   return {
     id: generateId(),
@@ -150,6 +158,7 @@ function toAssistantItem(msg: SDKMessage) {
   };
 }
 
+/** Build a tool-output item for the compacted message list. */
 function toToolItem(msg: SDKMessage) {
   return {
     id: generateId(),
@@ -159,6 +168,12 @@ function toToolItem(msg: SDKMessage) {
   };
 }
 
+/**
+ * Summarize older turns once the conversation exceeds the token threshold.
+ *
+ * Uses the shorter compaction retry policy so a provider outage cannot stall
+ * `state.save` for the full model-call backoff.
+ */
 export async function compactIfNeeded(
   state: ConversationState,
   config: CompactionConfig = DEFAULT_COMPACTION_CONFIG,

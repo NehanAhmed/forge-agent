@@ -30,6 +30,7 @@ export interface HeadlessRunOpts {
 type ModelResultInstance = ReturnType<AgentContext['callModel']>;
 type ModelUsage = Awaited<ReturnType<ModelResultInstance['getUsage']>>;
 
+/** Error used to stop a run before a model call when the budget is exhausted. */
 class BudgetExceededError extends Error {
   constructor(message: string) {
     super(message);
@@ -37,6 +38,7 @@ class BudgetExceededError extends Error {
   }
 }
 
+/** Build an abort error from the signal reason, preserving Error instances. */
 function abortError(signal: AbortSignal): unknown {
   if (signal.reason instanceof Error) return signal.reason;
   const error = new Error(typeof signal.reason === 'string' ? signal.reason : 'Operation aborted');
@@ -44,6 +46,7 @@ function abortError(signal: AbortSignal): unknown {
   return error;
 }
 
+/** Load persisted conversation state, treating an unreadable store as empty. */
 async function loadStateQuietly(state: StateAccessor): Promise<ConversationState | null> {
   try {
     return await state.load();
@@ -52,6 +55,7 @@ async function loadStateQuietly(state: StateAccessor): Promise<ConversationState
   }
 }
 
+/** Read accrued usage without letting telemetry failures mask the run result. */
 async function readUsageQuietly(
   result: ModelResultInstance | undefined,
   onError?: (error: unknown) => void,
@@ -65,6 +69,7 @@ async function readUsageQuietly(
   }
 }
 
+/** Cancel a failed attempt's stream, ignoring errors during cleanup. */
 async function cancelQuietly(result: ModelResultInstance | undefined): Promise<void> {
   if (!result || typeof result.cancel !== 'function') return;
   try {
@@ -74,14 +79,17 @@ async function cancelQuietly(result: ModelResultInstance | undefined): Promise<v
   }
 }
 
+/** Format a backoff delay for log output. */
 function formatDelay(ms: number): string {
   return ms < 1000 ? `${Math.round(ms)}ms` : `${Math.round(ms / 1000)}s`;
 }
 
+/** Join the useful classification fields into one log-friendly string. */
 function formatErrorDetail(error: ClassifiedModelError): string {
   return [error.category, error.status, error.code, error.provider].filter(value => value !== undefined).join(' ');
 }
 
+/** Pick the most useful human-readable message for a failed run. */
 function describeError(error: unknown, classified: ClassifiedModelError): string {
   if (error instanceof ModelRetryExhaustedError) {
     return `${classified.message} (after ${error.attempts} attempts)`;
@@ -90,6 +98,7 @@ function describeError(error: unknown, classified: ClassifiedModelError): string
   return candidate?.error?.message ?? candidate?.message ?? classified.message;
 }
 
+/** Map a classified error to the stable `RunResult` error code. */
 function mapErrorCode(classified: ClassifiedModelError): string {
   if (classified.category === 'auth' || classified.status === 401 || classified.status === 403) {
     return 'auth_failure';
@@ -100,6 +109,12 @@ function mapErrorCode(classified: ClassifiedModelError): string {
   return classified.retryable ? 'max_retries' : 'fatal';
 }
 
+/**
+ * Run one task headlessly and return a stable result envelope.
+ *
+ * Retryable model failures are retried with the shared policy, resuming from
+ * persisted conversation state when a failed attempt saved progress.
+ */
 export async function runAgentHeadless(
   goal: string,
   ctx: AgentContext,

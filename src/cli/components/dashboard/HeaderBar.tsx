@@ -44,7 +44,7 @@ export function HeaderBar({ tasks, approvalsCount, filter, modelName, theme, gly
   }, [tasks, columns, filter, ascii, glyphs.bullet]);
 
   const right = [
-    columns >= 72 ? `model: ${truncateCells(modelName, 28)}` : '',
+    columns >= 100 ? `model: ${truncateCells(modelName, 28)}` : '',
     approvalsCount > 0
       ? `${glyphs.approval} ${approvalsCount} approval${approvalsCount === 1 ? '' : 's'} ${glyphs.bullet} a`
       : '',

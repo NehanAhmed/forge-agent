@@ -128,9 +128,13 @@ Compaction uses a shorter three-retry schedule (2s, 5s, 10s) because it runs ins
 
 Headless runs and chat persist conversation state, so a retry after a mid-stream drop
 resumes with an empty input once durable progress exists; otherwise the original
-goal/message is sent again. Failed attempts still count as requests, and partial
-token/cost usage is recorded before the retry. The same policy covers
-`runAgentHeadless`, `runAgent`, `spawnSubAgent`, and `compactIfNeeded`.
+goal/message is sent again.
+
+Accounting differs by call site. Only headless runs count each failed attempt as a
+request; they and chat add partial token/cost usage only when `getUsage()` returns usage.
+Chat does not count requests, and compaction records neither request nor usage totals.
+The same retry policy covers `runAgentHeadless`, `runAgent`, `spawnSubAgent`, and
+`compactIfNeeded`.
 
 ## Persistence
 

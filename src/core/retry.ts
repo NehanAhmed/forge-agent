@@ -54,6 +54,31 @@ export interface ClassifiedModelError {
   retryAfterMs?: number;
 }
 
+/**
+ * Fields the SDK refreshes on every save without reflecting new progress.
+ * They are ignored when comparing two state snapshots.
+ */
+const VOLATILE_STATE_FIELDS = new Set(['createdAt', 'updatedAt']);
+
+/**
+ * Recursively sort object keys and drop volatile timestamps so two states can
+ * be compared by content rather than serialization order.
+ */
+function canonicalizeState(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeState);
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const result: Record<string, unknown> = {};
+    for (const key of Object.keys(record).sort()) {
+      if (VOLATILE_STATE_FIELDS.has(key)) continue;
+      result[key] = canonicalizeState(record[key]);
+    }
+    return result;
+  }
+  return value;
+}
+
+/** Count the messages in a state snapshot. */
 function stateMessageCount(state: ConversationState | null): number {
   if (!state) return 0;
   const messages = (state as { messages?: unknown }).messages;
@@ -64,18 +89,19 @@ function stateMessageCount(state: ConversationState | null): number {
  * Detect whether a failed attempt left durable progress behind. When it did,
  * the retry must resume from that state instead of re-sending the original
  * input (which would duplicate the user message and could replay tool work).
+ *
+ * The comparison ignores timestamps and key order, so a state that was merely
+ * reloaded or touched by a no-op save is not mistaken for progress.
  */
 export function hasConversationProgress(
   baseline: ConversationState | null,
   current: ConversationState | null,
 ): boolean {
   if (!current) return false;
+  // A new session has no baseline; the goal only counts as persisted once the
+  // SDK has written at least one message.
   if (!baseline) return stateMessageCount(current) > 0;
-  if (stateMessageCount(current) > stateMessageCount(baseline)) return true;
-  if (current.previousResponseId !== baseline.previousResponseId) return true;
-  if ((current.pendingToolCalls?.length ?? 0) > 0) return true;
-  if ((current.pendingAsyncTools?.length ?? 0) > 0) return true;
-  return false;
+  return JSON.stringify(canonicalizeState(baseline)) !== JSON.stringify(canonicalizeState(current));
 }
 
 const MAX_ERROR_DEPTH = 6;
@@ -212,10 +238,12 @@ interface ErrorSignals {
   aborted: boolean;
 }
 
+/** True for non-null, non-array objects. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+/** Coerce a numeric or numeric-string HTTP status into 100–599, else undefined. */
 function toStatusCode(value: unknown): number | undefined {
   const numeric = typeof value === 'number' ? value : typeof value === 'string' ? Number(value.trim()) : NaN;
   if (!Number.isFinite(numeric)) return undefined;
@@ -223,15 +251,18 @@ function toStatusCode(value: unknown): number | undefined {
   return status >= 100 && status <= 599 ? status : undefined;
 }
 
+/** True when the code is a known transient network/runtime code. */
 function isNetworkCode(code: string): boolean {
   return RETRYABLE_NETWORK_CODES.has(code.toUpperCase());
 }
 
+/** True when the code is a provider error code the classifier understands. */
 function isKnownProviderCode(code: string): boolean {
   const normalized = code.toLowerCase();
   return RETRYABLE_PROVIDER_CODES.has(normalized) || NON_RETRYABLE_PROVIDER_CODES.has(normalized);
 }
 
+/** Parse a JSON payload embedded at the start of, or inside, a text string. */
 function parseEmbeddedJson(text: string): unknown {
   const trimmed = text.trim();
   if (!trimmed) return undefined;
@@ -253,6 +284,7 @@ function parseEmbeddedJson(text: string): unknown {
   }
 }
 
+/** Parse a `Retry-After` header from a Headers instance or a plain object. */
 function extractRetryAfterMs(headers: unknown): number | undefined {
   if (headers === null || headers === undefined || typeof headers !== 'object') return undefined;
 
@@ -289,6 +321,10 @@ function extractRetryAfterMs(headers: unknown): number | undefined {
   return undefined;
 }
 
+/**
+ * Walk an error and everything it wraps (nested error, cause, body, message,
+ * and embedded JSON) collecting status, code, provider, and Retry-After hints.
+ */
 function collectSignals(error: unknown): ErrorSignals {
   const signals: ErrorSignals = {
     statuses: [],
@@ -299,6 +335,7 @@ function collectSignals(error: unknown): ErrorSignals {
   };
   const seen = new WeakSet<object>();
 
+  /** Visit one node of the error graph, guarding against cycles and depth. */
   const visit = (value: unknown, depth: number): void => {
     if (value === null || value === undefined || depth > MAX_ERROR_DEPTH) return;
 
@@ -376,6 +413,7 @@ function collectSignals(error: unknown): ErrorSignals {
   return signals;
 }
 
+/** Choose the clearest human-readable message, skipping JSON wrappers. */
 function pickMessage(messages: readonly string[]): string {
   for (const raw of messages) {
     const message = raw.trim();
@@ -391,6 +429,7 @@ function pickMessage(messages: readonly string[]): string {
   return 'Unknown model error';
 }
 
+/** Classify an HTTP status, or return undefined for statuses with no rule. */
 function classifyStatus(status: number): { retryable: boolean; category: ModelErrorCategory } | undefined {
   if (status === 401 || status === 403) return { retryable: false, category: 'auth' };
   if (NON_RETRYABLE_STATUS_CODES.has(status)) return { retryable: false, category: 'invalid_request' };
@@ -402,6 +441,7 @@ function classifyStatus(status: number): { retryable: boolean; category: ModelEr
   return undefined;
 }
 
+/** Classify a provider error code, or return undefined for unknown codes. */
 function classifyProviderCode(code: string): { retryable: boolean; category: ModelErrorCategory } | undefined {
   const normalized = code.toLowerCase();
   if (NON_RETRYABLE_PROVIDER_CODES.has(normalized)) {
@@ -422,6 +462,7 @@ function classifyProviderCode(code: string): { retryable: boolean; category: Mod
   return undefined;
 }
 
+/** Return the first matching message pattern's category, if any. */
 function matchMessage(
   messages: readonly string[],
   patterns: readonly MessagePattern[],
@@ -461,28 +502,17 @@ export function classifyModelError(error: unknown): ClassifiedModelError {
 
   if (signals.aborted) return { ...base, category: 'aborted', retryable: false };
 
-  if (status !== undefined) {
-    const classified = classifyStatus(status);
-    if (classified && !classified.retryable) return { ...base, ...classified };
-  }
+  const statusClassification = status !== undefined ? classifyStatus(status) : undefined;
+  const codeClassification = providerCode ? classifyProviderCode(providerCode) : undefined;
 
-  if (providerCode) {
-    const classified = classifyProviderCode(providerCode);
-    if (classified && !classified.retryable) return { ...base, ...classified };
-  }
+  // Explicit non-retryable signals win over retryable ones.
+  if (statusClassification && !statusClassification.retryable) return { ...base, ...statusClassification };
+  if (codeClassification && !codeClassification.retryable) return { ...base, ...codeClassification };
+  if (statusClassification) return { ...base, ...statusClassification };
+  if (codeClassification) return { ...base, ...codeClassification };
 
   const nonRetryableMessage = matchMessage(signals.messages, NON_RETRYABLE_MESSAGE_PATTERNS);
   if (nonRetryableMessage) return { ...base, ...nonRetryableMessage, retryable: false };
-
-  if (status !== undefined) {
-    const classified = classifyStatus(status);
-    if (classified) return { ...base, ...classified };
-  }
-
-  if (providerCode) {
-    const classified = classifyProviderCode(providerCode);
-    if (classified) return { ...base, ...classified };
-  }
 
   if (networkCode) {
     return {
@@ -543,6 +573,7 @@ export function sleepWithSignal(ms: number, signal?: AbortSignal): Promise<void>
   });
 }
 
+/** Build an abort error from the signal reason, preserving Error instances. */
 function abortReason(signal: AbortSignal): unknown {
   if (signal.reason instanceof Error) return signal.reason;
   const error = new Error(typeof signal.reason === 'string' ? signal.reason : 'Operation aborted');

@@ -4,6 +4,7 @@ import {
   classifyModelError,
   computeRetryDelayMs,
   DEFAULT_MODEL_RETRY_POLICY,
+  hasConversationProgress,
   ModelRetryExhaustedError,
   sleepWithSignal,
   withModelRetry,
@@ -463,5 +464,105 @@ describe('withModelRetry', () => {
 
     assert.equal(calls, 3);
     assert.deepEqual(delays, [10, 20]);
+  });
+});
+
+describe('status precedence over message text', () => {
+  it('retries a retryable status even when the message looks like an auth failure', () => {
+    const classified = classifyModelError(httpError(503, 'authentication failed'));
+
+    assert.equal(classified.retryable, true);
+    assert.equal(classified.category, 'upstream');
+    assert.equal(classified.status, 503);
+  });
+
+  it('retries a retryable status even when the message mentions context length', () => {
+    const classified = classifyModelError(httpError(429, 'maximum context length exceeded'));
+
+    assert.equal(classified.retryable, true);
+    assert.equal(classified.category, 'rate_limit');
+    assert.equal(classified.status, 429);
+  });
+
+  it('still lets an explicit non-retryable provider code win over a retryable status', () => {
+    const error: any = httpError(503, 'provider error');
+    error.error = { code: 'context_length_exceeded', message: 'too long' };
+
+    const classified = classifyModelError(error);
+
+    assert.equal(classified.retryable, false);
+    assert.equal(classified.category, 'invalid_request');
+    assert.equal(classified.code, 'context_length_exceeded');
+  });
+});
+
+function conversationState(overrides: Record<string, unknown> = {}): any {
+  return {
+    id: 'session',
+    messages: [{ role: 'user', content: 'hello' }],
+    status: 'in_progress',
+    createdAt: 1,
+    updatedAt: 1,
+    ...overrides,
+  };
+}
+
+describe('hasConversationProgress', () => {
+  it('returns false when the current state is missing', () => {
+    assert.equal(hasConversationProgress(conversationState(), null), false);
+  });
+
+  it('treats a timestamp-only save as no progress', () => {
+    const baseline = conversationState();
+    const current = conversationState({ updatedAt: 9_999 });
+
+    assert.equal(hasConversationProgress(baseline, current), false);
+  });
+
+  it('ignores object key order', () => {
+    const baseline = { id: 's', messages: [], status: 'active', createdAt: 1, updatedAt: 1 } as any;
+    const current = { updatedAt: 1, status: 'active', messages: [], createdAt: 1, id: 's' } as any;
+
+    assert.equal(hasConversationProgress(baseline, current), false);
+  });
+
+  it('detects an appended message', () => {
+    const baseline = conversationState();
+    const current = conversationState({
+      messages: [
+        { role: 'user', content: 'hello' },
+        { role: 'user', content: 'next' },
+      ],
+    });
+
+    assert.equal(hasConversationProgress(baseline, current), true);
+  });
+
+  it('detects changed message content without a count change', () => {
+    const baseline = conversationState();
+    const current = conversationState({ messages: [{ role: 'user', content: 'hello world' }] });
+
+    assert.equal(hasConversationProgress(baseline, current), true);
+  });
+
+  it('detects persisted partial progress that leaves message count unchanged', () => {
+    const baseline = conversationState();
+    const current = conversationState({
+      partialResponse: { text: 'half an answer', toolCalls: [] },
+    });
+
+    assert.equal(hasConversationProgress(baseline, current), true);
+  });
+
+  it('detects a new response id', () => {
+    const baseline = conversationState({ previousResponseId: 'a' });
+    const current = conversationState({ previousResponseId: 'b' });
+
+    assert.equal(hasConversationProgress(baseline, current), true);
+  });
+
+  it('requires a persisted message for a new session', () => {
+    assert.equal(hasConversationProgress(null, conversationState({ messages: [] })), false);
+    assert.equal(hasConversationProgress(null, conversationState()), true);
   });
 });
