@@ -6,6 +6,7 @@ import { DEFAULT_MODEL_ID } from '../core/models.js';
 import { StreamCoalescer } from '../core/stream-buffer.js';
 import {
   classifyModelError,
+  hasConversationProgress,
   ModelRetryExhaustedError,
   withModelRetry,
   type ClassifiedModelError,
@@ -49,27 +50,6 @@ async function loadStateQuietly(state: StateAccessor): Promise<ConversationState
   } catch {
     return null;
   }
-}
-
-function messageCount(state: ConversationState | null): number {
-  if (!state) return 0;
-  const messages = (state as { messages?: unknown }).messages;
-  return Array.isArray(messages) ? messages.length : 0;
-}
-
-/**
- * Detect whether a failed attempt left durable progress behind. When it did,
- * the retry must resume from that state instead of re-sending the goal (which
- * would duplicate the user message and could replay tool work).
- */
-function hasStateProgress(baseline: ConversationState | null, current: ConversationState | null): boolean {
-  if (!current) return false;
-  if (!baseline) return messageCount(current) > 0;
-  if (messageCount(current) > messageCount(baseline)) return true;
-  if (current.previousResponseId !== baseline.previousResponseId) return true;
-  if ((current.pendingToolCalls?.length ?? 0) > 0) return true;
-  if ((current.pendingAsyncTools?.length ?? 0) > 0) return true;
-  return false;
 }
 
 async function readUsageQuietly(
@@ -178,7 +158,7 @@ export async function runAgentHeadless(
       // After a failed attempt, resume from persisted progress when the SDK
       // managed to save it. Otherwise the original goal is still unsent.
       const currentState = attempt > 1 ? await loadStateQuietly(ctx.state) : null;
-      const input = attempt > 1 && hasStateProgress(baselineState, currentState) ? [] : goal;
+      const input = attempt > 1 && hasConversationProgress(baselineState, currentState) ? [] : goal;
 
       let result: ModelResultInstance | undefined;
       try {

@@ -10,6 +10,8 @@
  * interactive chat, sub-agents, and compaction) can share one policy.
  */
 
+import type { ConversationState } from '@openrouter/agent';
+
 export const DEFAULT_MODEL_RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 30_000, 60_000] as const;
 
 /** Compaction runs inside `state.save`, so keep its worst-case stall short. */
@@ -50,6 +52,30 @@ export interface ClassifiedModelError {
   message: string;
   /** Parsed `Retry-After` delay in milliseconds. */
   retryAfterMs?: number;
+}
+
+function stateMessageCount(state: ConversationState | null): number {
+  if (!state) return 0;
+  const messages = (state as { messages?: unknown }).messages;
+  return Array.isArray(messages) ? messages.length : 0;
+}
+
+/**
+ * Detect whether a failed attempt left durable progress behind. When it did,
+ * the retry must resume from that state instead of re-sending the original
+ * input (which would duplicate the user message and could replay tool work).
+ */
+export function hasConversationProgress(
+  baseline: ConversationState | null,
+  current: ConversationState | null,
+): boolean {
+  if (!current) return false;
+  if (!baseline) return stateMessageCount(current) > 0;
+  if (stateMessageCount(current) > stateMessageCount(baseline)) return true;
+  if (current.previousResponseId !== baseline.previousResponseId) return true;
+  if ((current.pendingToolCalls?.length ?? 0) > 0) return true;
+  if ((current.pendingAsyncTools?.length ?? 0) > 0) return true;
+  return false;
 }
 
 const MAX_ERROR_DEPTH = 6;
