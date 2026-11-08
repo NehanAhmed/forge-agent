@@ -1,5 +1,6 @@
 import { MODEL, COMPACTION_THRESHOLD_TOKENS, COMPACTION_KEEP_RECENT, SYSTEM_PROMPT } from './constants.js';
 import { getClient } from './client.js';
+import { COMPACTION_RETRY_POLICY, withModelRetry, type RetryOptions } from './retry.js';
 import type { ConversationState } from '@openrouter/agent';
 
 export interface CompactionConfig {
@@ -27,6 +28,7 @@ type SDKMessage = {
   type?: string;
 };
 
+/** Flatten an SDK message's text parts into a plain string. */
 function extractTextContent(content: unknown): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
@@ -38,6 +40,7 @@ function extractTextContent(content: unknown): string {
   return '';
 }
 
+/** Convert persisted SDK messages into the legacy shape used for summarization. */
 function stateToLegacyMessages(state: ConversationState): Array<{
   role: string;
   content: string | null;
@@ -87,6 +90,7 @@ function stateToLegacyMessages(state: ConversationState): Array<{
   return messages;
 }
 
+/** Convert a legacy message back into the SDK shape used by the compacted state. */
 function legacyToSDKMessage(msg: {
   role: string;
   content: string | null;
@@ -115,10 +119,17 @@ function legacyToSDKMessage(msg: {
   return { role: 'system', content: msg.content ?? '' };
 }
 
+/** Generate a unique id for a compacted message item. */
 function generateId(): string {
   return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
+/** Format a retry delay for compaction log output. */
+function formatRetryDelay(ms: number): string {
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${Math.round(ms / 1000)}s`;
+}
+
+/** Build a system item for the compacted message list. */
 function toSystemItem(msg: SDKMessage) {
   return {
     id: generateId(),
@@ -127,6 +138,7 @@ function toSystemItem(msg: SDKMessage) {
   };
 }
 
+/** Build a user item for the compacted message list. */
 function toUserItem(msg: SDKMessage) {
   return {
     id: generateId(),
@@ -135,6 +147,7 @@ function toUserItem(msg: SDKMessage) {
   };
 }
 
+/** Build an assistant item for the compacted message list. */
 function toAssistantItem(msg: SDKMessage) {
   return {
     id: generateId(),
@@ -145,6 +158,7 @@ function toAssistantItem(msg: SDKMessage) {
   };
 }
 
+/** Build a tool-output item for the compacted message list. */
 function toToolItem(msg: SDKMessage) {
   return {
     id: generateId(),
@@ -154,10 +168,17 @@ function toToolItem(msg: SDKMessage) {
   };
 }
 
+/**
+ * Summarize older turns once the conversation exceeds the token threshold.
+ *
+ * Uses the shorter compaction retry policy so a provider outage cannot stall
+ * `state.save` for the full model-call backoff.
+ */
 export async function compactIfNeeded(
   state: ConversationState,
   config: CompactionConfig = DEFAULT_COMPACTION_CONFIG,
   callModelOverride?: CompactionCallModel,
+  retryOptions: RetryOptions = {},
 ): Promise<ConversationState> {
   const legacyMessages = stateToLegacyMessages(state);
   const estimatedTokens = JSON.stringify(legacyMessages).length / 4;
@@ -177,20 +198,43 @@ export async function compactIfNeeded(
 
   try {
     const callModel = callModelOverride ?? ((request: Parameters<ModelCall>[0]) => getClient().callModel(request));
-    const summaryResponse = await callModel({
-      model: config.model,
-      input: [
-        {
-          role: 'system',
-          content:
-            "Summarize this conversation history concisely. You MUST explicitly state, verbatim or near-verbatim, what the user's most recent request/goal was — this is the single most important thing to preserve. Also preserve: file paths touched, key decisions made, and any unresolved sub-tasks. Discard: verbose reasoning, redundant tool output, and repeated file contents already summarized elsewhere.",
-        } as any,
-        { role: 'user', content: JSON.stringify(toSummarize) } as any,
-      ],
-      tools: [],
-    });
-
-    const summary = await summaryResponse.getText();
+    const summary = await withModelRetry(
+      async () => {
+        let summaryResponse: ReturnType<CompactionCallModel> | undefined;
+        try {
+          summaryResponse = await callModel({
+            model: config.model,
+            input: [
+              {
+                role: 'system',
+                content:
+                  "Summarize this conversation history concisely. You MUST explicitly state, verbatim or near-verbatim, what the user's most recent request/goal was — this is the single most important thing to preserve. Also preserve: file paths touched, key decisions made, and any unresolved sub-tasks. Discard: verbose reasoning, redundant tool output, and repeated file contents already summarized elsewhere.",
+              } as any,
+              { role: 'user', content: JSON.stringify(toSummarize) } as any,
+            ],
+            tools: [],
+          });
+          return await summaryResponse.getText();
+        } catch (error) {
+          try {
+            await summaryResponse?.cancel();
+          } catch {
+            // Cancellation is best-effort; the retry loop must not fail because of it.
+          }
+          throw error;
+        }
+      },
+      {
+        ...retryOptions,
+        policy: retryOptions.policy ?? COMPACTION_RETRY_POLICY,
+        onRetry: info => {
+          retryOptions.onRetry?.(info);
+          console.log(
+            `[compaction] model call failed (attempt ${info.retry}/${info.maxRetries + 1}), retrying in ${formatRetryDelay(info.delayMs)}: ${info.error.category}${info.error.status !== undefined ? ` ${info.error.status}` : ''}`,
+          );
+        },
+      },
+    );
 
     if (!summary) {
       console.log('[compaction] empty summary returned, skipping compaction this round.');

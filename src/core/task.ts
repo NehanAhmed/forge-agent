@@ -36,6 +36,8 @@ export interface Task {
   cwd: string;
   isolation: Isolation;
   policy: ApprovalPolicy;
+  /** Model used for this task's agent runs. Older persisted tasks may omit it. */
+  modelId?: string;
   worktree?: WorktreeInfo;
   reviewState: ReviewState;
   usage: TaskUsage;
@@ -82,6 +84,7 @@ export function createTask(
     depth?: number;
     treeId?: string;
     displayId?: string;
+    modelId?: string;
   } = {},
 ): Task {
   return {
@@ -96,6 +99,7 @@ export function createTask(
     cwd: opts.cwd ?? process.cwd(),
     isolation: opts.isolation ?? 'worktree',
     policy: opts.policy ?? 'ask',
+    modelId: opts.modelId,
     reviewState: 'none',
     usage: { inputTokens: 0, outputTokens: 0, cost: 0, requests: 0 },
     resumable: false,

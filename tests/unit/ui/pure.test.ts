@@ -45,8 +45,9 @@ describe('UI Pure Modules', () => {
       assert.deepEqual(parseCommand('/expand 1'), { kind: 'expand', target: '1' });
     });
 
-    it('parses /help and /quit', () => {
+    it('parses /help, /models, and /quit', () => {
       assert.deepEqual(parseCommand('/help'), { kind: 'help' });
+      assert.deepEqual(parseCommand('/models'), { kind: 'models' });
       assert.deepEqual(parseCommand('/quit'), { kind: 'quit' });
       assert.deepEqual(parseCommand('/exit'), { kind: 'quit' });
     });

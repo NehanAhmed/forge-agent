@@ -27,11 +27,23 @@ describe('configuration', () => {
     );
 
     const config = getConfig(file);
+    assert.equal(config.model, DEFAULT_CONFIG.model);
     assert.equal(config.children.maxDepth, 5);
     assert.equal(config.children.maxPerTask, DEFAULT_CONFIG.children.maxPerTask);
     assert.equal(config.ui.ascii, true);
     assert.equal(config.ui.logWindow, 10);
     assert.equal(config.ui.timestamps, DEFAULT_CONFIG.ui.timestamps);
+  });
+
+  it('reads and persists the selected model', t => {
+    const file = configPath(t);
+    fs.writeFileSync(file, JSON.stringify({ model: 'custom/model' }));
+
+    assert.equal(getConfig(file).model, 'custom/model');
+
+    const updated = updateConfig({ model: 'another/model' }, file);
+    assert.equal(updated.model, 'another/model');
+    assert.equal(JSON.parse(fs.readFileSync(file, 'utf-8')).model, 'another/model');
   });
 
   it('falls back for wrong types and malformed JSON', t => {

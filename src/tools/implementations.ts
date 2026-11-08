@@ -3,15 +3,16 @@ import path from 'path';
 import { execFileSync, execSync } from 'child_process';
 import { createTools } from './definitions.js';
 import { MODEL, SUBAGENT_MAX_ITERATIONS, SUBAGENT_TOOLS, SYSTEM_PROMPT } from '../core/constants.js';
-import { getClient } from '../core/client.js';
 import { formatRgOutput, resolveSafePath } from './helpers.js';
 import { stepCountIs } from '@openrouter/agent';
 import { loadTodos, saveTodos, formatTodoListOutput, getTodoCounts, type TodoItem } from '../core/todos.js';
 import type { AgentContext } from '../core/context.js';
+import { ModelRetryExhaustedError, withModelRetry, type RetryOptions } from '../core/retry.js';
 
 const GIT_TIMEOUT = 30_000;
 const DIFF_TRUNCATE_LIMIT = 50_000;
 
+/** Run a git command in `cwd`, returning its output or an `ERROR:` string. */
 function runGit(args: string[], cwd: string): string {
   try {
     return execFileSync('git', args, {
@@ -28,6 +29,7 @@ function runGit(args: string[], cwd: string): string {
   }
 }
 
+/** Return true when `cwd` is inside a git work tree. */
 function isGitRepo(cwd: string): boolean {
   try {
     execFileSync('git', ['rev-parse', '--git-dir'], { cwd, stdio: 'ignore', timeout: 5_000 });
@@ -37,6 +39,7 @@ function isGitRepo(cwd: string): boolean {
   }
 }
 
+/** Return the porcelain branch/status summary for the workspace. */
 export function gitStatus(ctx: AgentContext): string {
   if (!isGitRepo(ctx.cwd)) {
     return 'ERROR: Not a git repository (or git not installed).';
@@ -44,6 +47,7 @@ export function gitStatus(ctx: AgentContext): string {
   return runGit(['status', '--porcelain=v1', '--branch'], ctx.cwd);
 }
 
+/** Return the workspace diff, optionally staged and limited to `paths`. */
 export function gitDiff(ctx: AgentContext, staged: boolean = false, paths: string[] = []): string {
   if (!isGitRepo(ctx.cwd)) {
     return 'ERROR: Not a git repository (or git not installed).';
@@ -63,6 +67,7 @@ export function gitDiff(ctx: AgentContext, staged: boolean = false, paths: strin
   return output;
 }
 
+/** Stage the given paths after resolving them inside the workspace. */
 export function gitAdd(ctx: AgentContext, paths: string[]): string {
   if (!isGitRepo(ctx.cwd)) {
     return 'ERROR: Not a git repository (or git not installed).';
@@ -92,6 +97,7 @@ export function gitAdd(ctx: AgentContext, paths: string[]): string {
   return result;
 }
 
+/** Commit staged changes with `message` and return the new commit summary. */
 export function gitCommit(ctx: AgentContext, message: string): string {
   if (!isGitRepo(ctx.cwd)) {
     return 'ERROR: Not a git repository (or git not installed).';
@@ -115,6 +121,7 @@ export function gitCommit(ctx: AgentContext, message: string): string {
   return `Committed ${hash} on ${branch}\n${summary}`;
 }
 
+/** Execute a shell command in the workspace and return its output or `ERROR:`. */
 export function runBash(ctx: AgentContext, command: string): string {
   // NOTE: run_bash is NOT path-sandboxed — a shell command can `cd`, use
   // absolute paths, or chain commands in ways resolveSafePath can't
@@ -138,6 +145,7 @@ export function runBash(ctx: AgentContext, command: string): string {
   }
 }
 
+/** Read a workspace-relative file as UTF-8 text. */
 export function readFile(ctx: AgentContext, path: string): string {
   try {
     const safePath = resolveSafePath(path, ctx.cwd);
@@ -147,6 +155,7 @@ export function readFile(ctx: AgentContext, path: string): string {
   }
 }
 
+/** Write UTF-8 text to a workspace-relative file, creating parent directories. */
 export function writeFile(ctx: AgentContext, filePath: string, content: string): string {
   try {
     const safePath = resolveSafePath(filePath, ctx.cwd);
@@ -230,7 +239,55 @@ export function editFile(ctx: AgentContext, path: string, oldContent: string, ne
   return editFileOnce(ctx, path, oldContent, newContent);
 }
 
-export async function spawnSubAgent(ctx: AgentContext, task: string): Promise<string> {
+type SubAgentResult = ReturnType<AgentContext['callModel']>;
+type SubAgentUsage = Awaited<ReturnType<SubAgentResult['getUsage']>>;
+
+/** Read a sub-agent attempt's accrued usage, ignoring telemetry failures. */
+async function readSubAgentUsage(result: SubAgentResult | undefined): Promise<SubAgentUsage | null> {
+  if (!result || typeof result.getUsage !== 'function') return null;
+  try {
+    return await result.getUsage();
+  } catch {
+    return null;
+  }
+}
+
+/** Cancel a failed sub-agent attempt, ignoring errors during cleanup. */
+async function cancelSubAgentResult(result: SubAgentResult | undefined): Promise<void> {
+  if (!result || typeof result.cancel !== 'function') return;
+  try {
+    await result.cancel();
+  } catch {
+    // Cancellation is best-effort; the retry loop must not fail because of it.
+  }
+}
+
+/** Record one sub-agent request and any usage the provider reported. */
+function recordSubAgentUsage(ctx: AgentContext, usage: SubAgentUsage | null): void {
+  ctx.budget.record({
+    tokens: (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0),
+    cost: usage?.cost ?? 0,
+    requests: 1,
+  });
+}
+
+/** Options for {@link spawnSubAgent}. */
+export interface SpawnSubAgentOptions {
+  /** Retry overrides for tests and callers that need a different policy. */
+  retry?: RetryOptions;
+}
+
+/**
+ * Delegate a read-only research task to a sub-agent.
+ *
+ * Retryable model failures use the shared retry policy; each failed attempt is
+ * charged to the parent budget before the retry.
+ */
+export async function spawnSubAgent(
+  ctx: AgentContext,
+  task: string,
+  options: SpawnSubAgentOptions = {},
+): Promise<string> {
   // Create a sub-agent context with read-only tools
   const subCtx: AgentContext = {
     ...ctx,
@@ -238,25 +295,48 @@ export async function spawnSubAgent(ctx: AgentContext, task: string): Promise<st
     taskId: undefined, // Sub-agents are ephemeral
   };
   const readOnlyTools = createTools(subCtx).filter(t => SUBAGENT_TOOLS.includes(t.function.name));
-  let result;
+
   try {
-    result = getClient().callModel({
-      model: MODEL,
-      instructions: SYSTEM_PROMPT,
-      input: task,
-      tools: readOnlyTools,
-      stopWhen: [stepCountIs(SUBAGENT_MAX_ITERATIONS)],
-    });
-  } catch (err: any) {
-    return `ERROR: sub-agent model call failed — ${err?.error?.message ?? err?.message ?? String(err)}`;
-  }
-  try {
-    return await result.getText();
-  } catch (err: any) {
-    return `ERROR: sub-agent stream failed — ${err?.error?.message ?? err?.message ?? String(err)}`;
+    return await withModelRetry(
+      async () => {
+        if (!ctx.budget.canSpend()) {
+          throw new Error('Budget exhausted before sub-agent model call');
+        }
+
+        let result: SubAgentResult | undefined;
+        try {
+          result = ctx.callModel({
+            model: MODEL,
+            instructions: SYSTEM_PROMPT,
+            input: task,
+            tools: readOnlyTools,
+            stopWhen: [stepCountIs(SUBAGENT_MAX_ITERATIONS)],
+            signal: ctx.signal,
+          });
+          const text = await result.getText();
+          recordSubAgentUsage(ctx, await readSubAgentUsage(result));
+          return text;
+        } catch (error) {
+          // Failed attempts still consume a request and whatever tokens the
+          // provider already billed.
+          const partialUsage = await readSubAgentUsage(result);
+          await cancelSubAgentResult(result);
+          recordSubAgentUsage(ctx, partialUsage);
+          throw error;
+        }
+      },
+      { ...options.retry, signal: options.retry?.signal ?? ctx.signal },
+    );
+  } catch (error) {
+    if (error instanceof ModelRetryExhaustedError) {
+      return `ERROR: sub-agent model call failed after ${error.attempts} attempts — ${error.classified.message}`;
+    }
+    const errMsg = (error as any)?.error?.message ?? (error as any)?.message ?? String(error);
+    return `ERROR: sub-agent model call failed — ${errMsg}`;
   }
 }
 
+/** Search the workspace with ripgrep and return formatted matches. */
 export function searchCodebase(
   ctx: AgentContext,
   pattern: string,
@@ -304,6 +384,7 @@ export function searchCodebase(
   }
 }
 
+/** Replace the session todo list and return a formatted summary. */
 export function todoWrite(
   sessionId: string,
   todos: Array<{ id: string; content: string; status: 'pending' | 'in_progress' | 'completed' }>,
@@ -317,6 +398,7 @@ export function todoWrite(
   }
 }
 
+/** Return the formatted todo list for a session. */
 export function todoRead(sessionId: string): string {
   try {
     const todoList = loadTodos(sessionId);

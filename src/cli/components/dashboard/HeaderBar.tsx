@@ -4,12 +4,13 @@ import type { Task } from '../../../core/task.js';
 import type { TaskFilter } from '../../../ui/selection.js';
 import type { Glyphs, Theme } from '../../../ui/theme.js';
 import { getStatusGlyph } from '../../../ui/status-glyphs.js';
-import { cellWidth, fitCells } from '../../../ui/text.js';
+import { cellWidth, fitCells, truncateCells } from '../../../ui/text.js';
 
 export interface HeaderBarProps {
   tasks: Task[];
   approvalsCount: number;
   filter: TaskFilter;
+  modelName: string;
   theme: Theme;
   glyphs: Glyphs;
   ascii: boolean;
@@ -20,7 +21,7 @@ export interface HeaderBarProps {
  * One-line status strip. It is intentionally plain text: the header must never
  * wrap into the task panes, so the line is measured and clipped before render.
  */
-export function HeaderBar({ tasks, approvalsCount, filter, theme, glyphs, ascii, columns }: HeaderBarProps) {
+export function HeaderBar({ tasks, approvalsCount, filter, modelName, theme, glyphs, ascii, columns }: HeaderBarProps) {
   const summary = useMemo(() => {
     const counts = {
       running: tasks.filter(task => task.status === 'running').length,
@@ -43,6 +44,7 @@ export function HeaderBar({ tasks, approvalsCount, filter, theme, glyphs, ascii,
   }, [tasks, columns, filter, ascii, glyphs.bullet]);
 
   const right = [
+    columns >= 100 ? `model: ${truncateCells(modelName, 28)}` : '',
     approvalsCount > 0
       ? `${glyphs.approval} ${approvalsCount} approval${approvalsCount === 1 ? '' : 's'} ${glyphs.bullet} a`
       : '',

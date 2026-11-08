@@ -24,6 +24,7 @@ export type ParsedCommand =
   | { kind: 'policy_toggle'; target: string }
   | { kind: 'collapse'; target: string }
   | { kind: 'expand'; target: string }
+  | { kind: 'models' }
   | { kind: 'help' }
   | { kind: 'quit' }
   | { kind: 'unknown'; error: string };
@@ -62,6 +63,7 @@ export function parseCommand(input: string): ParsedCommand {
   const cmd = parts[0]?.toLowerCase();
 
   if (cmd === 'help') return { kind: 'help' };
+  if (cmd === 'models') return { kind: 'models' };
   if (cmd === 'quit' || cmd === 'exit') return { kind: 'quit' };
 
   if (cmd === 'approve') {

@@ -1,5 +1,5 @@
 export type Focus = 'list' | 'input' | 'detail';
-export type OverlayKind = 'help' | 'approvals' | 'confirm' | 'diff';
+export type OverlayKind = 'help' | 'approvals' | 'confirm' | 'diff' | 'models';
 
 /** Structural subset of Ink's Key, so this module stays framework-free. */
 export interface KeyLike {
@@ -34,6 +34,7 @@ export type DashboardAction =
   | { type: 'none' }
   | { type: 'quit' }
   | { type: 'help' }
+  | { type: 'openModels' }
   | { type: 'closeOverlay' }
   | { type: 'cycleFocus'; reverse: boolean }
   | { type: 'blur' }
@@ -113,6 +114,10 @@ export function resolveAction(input: string, key: KeyLike, context: KeyContext):
 
   if (input === '?' && context.focus !== 'input') {
     return { type: 'help' };
+  }
+
+  if (input === 'M' && context.focus !== 'input') {
+    return { type: 'openModels' };
   }
 
   if (context.focus === 'detail') {
@@ -195,6 +200,11 @@ function resolveOverlayAction(
     if (key.escape || key.return || input === '?' || input === 'q') {
       return { type: 'closeOverlay' };
     }
+    return NONE;
+  }
+
+  // The model picker owns its own key handling (typing filters the list).
+  if (overlay === 'models') {
     return NONE;
   }
 

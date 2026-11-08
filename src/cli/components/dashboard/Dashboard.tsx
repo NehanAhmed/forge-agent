@@ -4,7 +4,8 @@ import type { Approval } from '../../../core/task-manager.js';
 import type { ApprovalPolicy } from '../../../core/context.js';
 import type { Task } from '../../../core/task.js';
 import type { TaskClient } from '../../../core/task-client.js';
-import { getConfig } from '../../../core/config.js';
+import { getConfig, updateConfig } from '../../../core/config.js';
+import { CODING_MODELS, DEFAULT_MODEL_ID, getModelName } from '../../../core/models.js';
 import { resolveTaskByIdOrDisplay } from '../../../core/tree.js';
 import { computeLayout } from '../../../ui/layout.js';
 import { buildLogLines, windowLogLines } from '../../../ui/log-view.js';
@@ -26,6 +27,7 @@ import { policyLabel } from '../../../ui/format.js';
 import { sanitizeText } from '../../../ui/text.js';
 import { createGlyphs, createTheme } from '../../../ui/theme.js';
 import { buildTree, getVisibleRows } from '../../../ui/tree-builder.js';
+import { ModelPickerModal } from '../ModelPickerModal.js';
 import { HeaderBar } from './HeaderBar.js';
 import { InputBar } from './InputBar.js';
 import { KeyBar } from './KeyBar.js';
@@ -57,6 +59,7 @@ interface ConfirmRequest {
 
 type DashboardOverlay =
   | { kind: 'help' }
+  | { kind: 'models' }
   | { kind: 'approvals'; index: number; confirmingAll: boolean }
   | { kind: 'confirm'; request: ConfirmRequest; pending: boolean }
   | {
@@ -86,6 +89,7 @@ export function Dashboard({ client }: DashboardProps) {
   const { columns, rows } = useWindowSize();
 
   const config = useMemo(() => getConfig(), []);
+  const [currentModelId, setCurrentModelId] = useState(() => config.model || DEFAULT_MODEL_ID);
   const screenReader = process.env.INK_SCREEN_READER === 'true';
   const ascii = config.ui.ascii || screenReader;
   const dot = ascii ? ' | ' : ' · ';
@@ -152,6 +156,17 @@ export function Dashboard({ client }: DashboardProps) {
 
   function notify(kind: Notice['kind'], text: string) {
     setNotice({ kind, text });
+  }
+
+  function selectModel(modelId: string) {
+    setCurrentModelId(modelId);
+    setOverlay(null);
+    try {
+      updateConfig({ model: modelId });
+      notify('info', `Model switched to ${getModelName(modelId)}`);
+    } catch (error: unknown) {
+      notify('error', `Model switched to ${getModelName(modelId)}, but saving it failed: ${errorText(error)}`);
+    }
   }
 
   // Keep a valid, visible selection whenever tasks, filters or folds change.
@@ -612,7 +627,7 @@ export function Dashboard({ client }: DashboardProps) {
     try {
       switch (parsed.kind) {
         case 'create': {
-          const task = await client.createTask(parsed.goal);
+          const task = await client.createTask(parsed.goal, { modelId: currentModelId });
           revealTask(task);
           notify('info', `Queued #${task.displayId}`);
           break;
@@ -622,6 +637,7 @@ export function Dashboard({ client }: DashboardProps) {
             readOnly: parsed.options.readOnly,
             isolation: parsed.options.shared ? 'shared' : undefined,
             policy: parsed.options.policy,
+            modelId: currentModelId,
           });
           revealTask(task);
           notify('info', `Queued #${task.displayId}`);
@@ -688,6 +704,9 @@ export function Dashboard({ client }: DashboardProps) {
         case 'help':
           setOverlay({ kind: 'help' });
           break;
+        case 'models':
+          setOverlay({ kind: 'models' });
+          break;
         case 'quit':
           requestQuit();
           break;
@@ -711,6 +730,9 @@ export function Dashboard({ client }: DashboardProps) {
         break;
       case 'help':
         setOverlay({ kind: 'help' });
+        break;
+      case 'openModels':
+        setOverlay({ kind: 'models' });
         break;
       case 'closeOverlay':
         setOverlay(current =>
@@ -889,6 +911,10 @@ export function Dashboard({ client }: DashboardProps) {
         setOverlay({ kind: 'help' });
         return;
       }
+      if (inputChar === 'M') {
+        setOverlay({ kind: 'models' });
+        return;
+      }
     }
 
     const action = resolveAction(inputChar, key, {
@@ -930,12 +956,24 @@ export function Dashboard({ client }: DashboardProps) {
       <Box flexDirection="column" width={columns} height={rows}>
         <TooSmall columns={columns} rows={rows} theme={theme} help={tinyHelp} ascii={ascii} />
         <KeyBar
-          hints={tinyHelp ? 'esc close' : `q quit${dot}? help`}
+          hints={tinyHelp ? 'esc close' : `q quit${dot}? help${dot}M model`}
           notice={notice ? { kind: notice.kind, text: notice.text } : null}
           confirm={confirm}
           width={columns}
           theme={theme}
           glyphs={glyphs}
+        />
+        <ModelPickerModal
+          isOpen={overlay?.kind === 'models'}
+          onClose={() => setOverlay(null)}
+          onSelect={selectModel}
+          currentModelId={currentModelId}
+          models={CODING_MODELS}
+          width={columns}
+          height={rows}
+          theme={theme}
+          glyphs={glyphs}
+          ascii={ascii}
         />
       </Box>
     );
@@ -950,9 +988,11 @@ export function Dashboard({ client }: DashboardProps) {
       ? `${nav} select${dot}enter approve${dot}n deny${dot}A approve all${dot}esc close`
       : overlay?.kind === 'diff'
         ? `${nav} scroll${dot}pgup/pgdn page${dot}g/G top/bottom${dot}esc close`
-        : overlay?.kind === 'help'
-          ? 'esc close'
-          : '';
+        : overlay?.kind === 'models'
+          ? `${nav} move${dot}enter select${dot}esc close`
+          : overlay?.kind === 'help'
+            ? 'esc close'
+            : '';
   const hints = overlay
     ? overlayHints
     : followUpTaskId
@@ -960,8 +1000,8 @@ export function Dashboard({ client }: DashboardProps) {
       : focus === 'input'
         ? `enter run${dot}/ commands${dot}tab list${dot}esc list`
         : focus === 'list'
-          ? `${nav} select${dot}${lr} fold${dot}enter open${dot}p policy${dot}d del${dot}x discard${dot}m merge${dot}c cancel${dot}a approvals${dot}? help`
-          : `${nav} scroll${dot}f follow${dot}v verbose${dot}p policy${dot}enter follow-up${dot}esc back`;
+          ? `${nav} select${dot}${lr} fold${dot}enter open${dot}p policy${dot}d del${dot}x discard${dot}m merge${dot}c cancel${dot}a approvals${dot}M model${dot}? help`
+          : `${nav} scroll${dot}f follow${dot}v verbose${dot}p policy${dot}M model${dot}enter follow-up${dot}esc back`;
 
   return (
     <Box flexDirection="column" width={columns} height={rows} overflow="hidden">
@@ -969,6 +1009,7 @@ export function Dashboard({ client }: DashboardProps) {
         tasks={tasks}
         approvalsCount={approvals.length}
         filter={filter}
+        modelName={getModelName(currentModelId)}
         theme={theme}
         glyphs={glyphs}
         ascii={ascii}
@@ -1081,6 +1122,19 @@ export function Dashboard({ client }: DashboardProps) {
         width={columns}
         theme={theme}
         glyphs={glyphs}
+      />
+
+      <ModelPickerModal
+        isOpen={overlay?.kind === 'models'}
+        onClose={() => setOverlay(null)}
+        onSelect={selectModel}
+        currentModelId={currentModelId}
+        models={CODING_MODELS}
+        width={columns}
+        height={rows}
+        theme={theme}
+        glyphs={glyphs}
+        ascii={ascii}
       />
     </Box>
   );

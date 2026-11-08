@@ -113,6 +113,29 @@ with backoff, budget checks, abort handling, and a final summary. Streaming text
 coalesced by `StreamCoalescer` (flush at 512 characters or 120 ms) so tokens do not become
 one log write and one re-render each.
 
+### Model-call retries
+
+Every model call goes through `src/core/retry.ts`. A failed call is retried when retrying
+is safe: HTTP 408/425/429 and upstream 5xx responses (except 501/505), provider codes such
+as `server_error` or `provider_overloaded`, and network failures (`ECONNRESET`,
+`UND_ERR_SOCKET`, `fetch failed`, mid-stream closes). Authentication, validation,
+context-length, content-policy, quota, and abort errors are never retried.
+
+The default policy is one initial call plus five retries with delays of 2s, 5s, 10s, 30s,
+and 60s. A provider `Retry-After` value overrides the schedule and is capped at 60s.
+Compaction uses a shorter three-retry schedule (2s, 5s, 10s) because it runs inside
+`state.save`.
+
+Headless runs and chat persist conversation state, so a retry after a mid-stream drop
+resumes with an empty input once durable progress exists; otherwise the original
+goal/message is sent again.
+
+Accounting differs by call site. Only headless runs count each failed attempt as a
+request; they and chat add partial token/cost usage only when `getUsage()` returns usage.
+Chat does not count requests, and compaction records neither request nor usage totals.
+The same retry policy covers `runAgentHeadless`, `runAgent`, `spawnSubAgent`, and
+`compactIfNeeded`.
+
 ## Persistence
 
 - All task storage is scoped to the directory Forge was opened in:
