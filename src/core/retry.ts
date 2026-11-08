@@ -345,7 +345,9 @@ function collectSignals(error: unknown): ErrorSignals {
       }
     }
 
-    if (typeof node.message === 'string') signals.messages.push(node.message);
+    // Parse the message too: SDKs wrap upstream JSON in an error message such
+    // as `Response failed: {"error": {...}}`.
+    if (typeof node.message === 'string') visit(node.message, depth + 1);
 
     if (isRecord(node.metadata)) {
       const provider = node.metadata.provider_name ?? node.metadata.provider;
