@@ -85,4 +85,103 @@ describe('conversation compaction', () => {
       state,
     );
   });
+
+  it('retries a retryable model failure before summarizing', async () => {
+    mock.method(console, 'log', () => {});
+    const state = conversation(8);
+    let calls = 0;
+
+    const result = await compactIfNeeded(
+      state,
+      config(),
+      () => {
+        calls++;
+        if (calls === 1) {
+          const error: any = new Error('rate limited');
+          error.status = 429;
+          throw error;
+        }
+        return fakeModel({ text: 'SUMMARY' })() as any;
+      },
+      { sleep: async () => {} },
+    );
+
+    assert.notEqual(result, state);
+    assert.equal(calls, 2);
+    assert.match((result as any).messages[1].content, /SUMMARY/);
+  });
+
+  it('retries a mid-stream summary failure', async () => {
+    mock.method(console, 'log', () => {});
+    const state = conversation(8);
+    let calls = 0;
+    const retryable: any = new Error('socket hang up');
+    retryable.code = 'ECONNRESET';
+
+    const result = await compactIfNeeded(
+      state,
+      config(),
+      () => {
+        calls++;
+        if (calls === 1) return fakeModel({ error: retryable })() as any;
+        return fakeModel({ text: 'SUMMARY' })() as any;
+      },
+      { sleep: async () => {} },
+    );
+
+    assert.notEqual(result, state);
+    assert.equal(calls, 2);
+  });
+
+  it('uses the shorter compaction schedule and keeps state after exhaustion', async () => {
+    mock.method(console, 'log', () => {});
+    const state = conversation(8);
+    const delays: number[] = [];
+    let calls = 0;
+
+    const result = await compactIfNeeded(
+      state,
+      config(),
+      () => {
+        calls++;
+        const error: any = new Error('service unavailable');
+        error.status = 503;
+        throw error;
+      },
+      {
+        sleep: async ms => {
+          delays.push(ms);
+        },
+      },
+    );
+
+    assert.equal(result, state);
+    assert.equal(calls, 4);
+    assert.deepEqual(delays, [2000, 5000, 10000]);
+  });
+
+  it('does not retry non-retryable summary failures', async () => {
+    mock.method(console, 'log', () => {});
+    const state = conversation(8);
+    let calls = 0;
+
+    const result = await compactIfNeeded(
+      state,
+      config(),
+      () => {
+        calls++;
+        const error: any = new Error('context length exceeded');
+        error.status = 400;
+        throw error;
+      },
+      {
+        sleep: async () => {
+          throw new Error('should not sleep');
+        },
+      },
+    );
+
+    assert.equal(result, state);
+    assert.equal(calls, 1);
+  });
 });

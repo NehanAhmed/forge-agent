@@ -3,11 +3,11 @@ import path from 'path';
 import { execFileSync, execSync } from 'child_process';
 import { createTools } from './definitions.js';
 import { MODEL, SUBAGENT_MAX_ITERATIONS, SUBAGENT_TOOLS, SYSTEM_PROMPT } from '../core/constants.js';
-import { getClient } from '../core/client.js';
 import { formatRgOutput, resolveSafePath } from './helpers.js';
 import { stepCountIs } from '@openrouter/agent';
 import { loadTodos, saveTodos, formatTodoListOutput, getTodoCounts, type TodoItem } from '../core/todos.js';
 import type { AgentContext } from '../core/context.js';
+import { ModelRetryExhaustedError, withModelRetry, type RetryOptions } from '../core/retry.js';
 
 const GIT_TIMEOUT = 30_000;
 const DIFF_TRUNCATE_LIMIT = 50_000;
@@ -230,7 +230,45 @@ export function editFile(ctx: AgentContext, path: string, oldContent: string, ne
   return editFileOnce(ctx, path, oldContent, newContent);
 }
 
-export async function spawnSubAgent(ctx: AgentContext, task: string): Promise<string> {
+type SubAgentResult = ReturnType<AgentContext['callModel']>;
+type SubAgentUsage = Awaited<ReturnType<SubAgentResult['getUsage']>>;
+
+async function readSubAgentUsage(result: SubAgentResult | undefined): Promise<SubAgentUsage | null> {
+  if (!result || typeof result.getUsage !== 'function') return null;
+  try {
+    return await result.getUsage();
+  } catch {
+    return null;
+  }
+}
+
+async function cancelSubAgentResult(result: SubAgentResult | undefined): Promise<void> {
+  if (!result || typeof result.cancel !== 'function') return;
+  try {
+    await result.cancel();
+  } catch {
+    // Cancellation is best-effort; the retry loop must not fail because of it.
+  }
+}
+
+function recordSubAgentUsage(ctx: AgentContext, usage: SubAgentUsage | null): void {
+  ctx.budget.record({
+    tokens: (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0),
+    cost: usage?.cost ?? 0,
+    requests: 1,
+  });
+}
+
+export interface SpawnSubAgentOptions {
+  /** Retry overrides for tests and callers that need a different policy. */
+  retry?: RetryOptions;
+}
+
+export async function spawnSubAgent(
+  ctx: AgentContext,
+  task: string,
+  options: SpawnSubAgentOptions = {},
+): Promise<string> {
   // Create a sub-agent context with read-only tools
   const subCtx: AgentContext = {
     ...ctx,
@@ -238,22 +276,44 @@ export async function spawnSubAgent(ctx: AgentContext, task: string): Promise<st
     taskId: undefined, // Sub-agents are ephemeral
   };
   const readOnlyTools = createTools(subCtx).filter(t => SUBAGENT_TOOLS.includes(t.function.name));
-  let result;
+
   try {
-    result = getClient().callModel({
-      model: MODEL,
-      instructions: SYSTEM_PROMPT,
-      input: task,
-      tools: readOnlyTools,
-      stopWhen: [stepCountIs(SUBAGENT_MAX_ITERATIONS)],
-    });
-  } catch (err: any) {
-    return `ERROR: sub-agent model call failed — ${err?.error?.message ?? err?.message ?? String(err)}`;
-  }
-  try {
-    return await result.getText();
-  } catch (err: any) {
-    return `ERROR: sub-agent stream failed — ${err?.error?.message ?? err?.message ?? String(err)}`;
+    return await withModelRetry(
+      async () => {
+        if (!ctx.budget.canSpend()) {
+          throw new Error('Budget exhausted before sub-agent model call');
+        }
+
+        let result: SubAgentResult | undefined;
+        try {
+          result = ctx.callModel({
+            model: MODEL,
+            instructions: SYSTEM_PROMPT,
+            input: task,
+            tools: readOnlyTools,
+            stopWhen: [stepCountIs(SUBAGENT_MAX_ITERATIONS)],
+            signal: ctx.signal,
+          });
+          const text = await result.getText();
+          recordSubAgentUsage(ctx, await readSubAgentUsage(result));
+          return text;
+        } catch (error) {
+          // Failed attempts still consume a request and whatever tokens the
+          // provider already billed.
+          const partialUsage = await readSubAgentUsage(result);
+          await cancelSubAgentResult(result);
+          recordSubAgentUsage(ctx, partialUsage);
+          throw error;
+        }
+      },
+      { ...options.retry, signal: options.retry?.signal ?? ctx.signal },
+    );
+  } catch (error) {
+    if (error instanceof ModelRetryExhaustedError) {
+      return `ERROR: sub-agent model call failed after ${error.attempts} attempts — ${error.classified.message}`;
+    }
+    const errMsg = (error as any)?.error?.message ?? (error as any)?.message ?? String(error);
+    return `ERROR: sub-agent model call failed — ${errMsg}`;
   }
 }
 

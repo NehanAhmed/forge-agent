@@ -9,9 +9,11 @@ import {
   readFile,
   runBash,
   searchCodebase,
+  spawnSubAgent,
   writeFile,
 } from '../../../src/tools/implementations.js';
 import { createTestContext } from '../../helpers/context.js';
+import { fakeModel } from '../../helpers/model.js';
 import { tempDir } from '../../helpers/temp.js';
 import { hasRipgrep } from '../../helpers/guards.js';
 
@@ -107,5 +109,85 @@ describe('code search tool', () => {
     const output = searchCodebase(ctx, 'needle', '.', 10);
     assert.match(output, /needle/);
     assert.match(output, /a\.ts/);
+  });
+});
+
+describe('sub-agent tool', () => {
+  it('uses the context model call and records usage', async () => {
+    const ctx = createTestContext({
+      model: { text: 'sub result', usage: { inputTokens: 20, outputTokens: 10, cost: 0.001 } },
+    });
+
+    const result = await spawnSubAgent(ctx, 'look around');
+
+    assert.equal(result, 'sub result');
+    assert.deepEqual(ctx.budget.used, { tokens: 30, cost: 0.001, requests: 1 });
+  });
+
+  it('retries a retryable failure and then succeeds', async () => {
+    let calls = 0;
+    const ctx = createTestContext({
+      callModel: (() => {
+        calls++;
+        if (calls === 1) {
+          const error: any = new Error('rate limited');
+          error.status = 429;
+          error.headers = { 'retry-after': '0' };
+          throw error;
+        }
+        return fakeModel({
+          text: 'recovered',
+          usage: { inputTokens: 5, outputTokens: 2, cost: 0.0002 },
+        })();
+      }) as any,
+    });
+
+    const result = await spawnSubAgent(ctx, 'task', { retry: { sleep: async () => {} } });
+
+    assert.equal(result, 'recovered');
+    assert.equal(calls, 2);
+    assert.deepEqual(ctx.budget.used, { tokens: 7, cost: 0.0002, requests: 2 });
+  });
+
+  it('returns an ERROR string after exhausting retries', async () => {
+    let calls = 0;
+    const ctx = createTestContext({
+      callModel: (() => {
+        calls++;
+        const error: any = new Error('bad gateway');
+        error.status = 502;
+        throw error;
+      }) as any,
+    });
+
+    const result = await spawnSubAgent(ctx, 'task', { retry: { sleep: async () => {} } });
+
+    assert.match(result, /^ERROR: sub-agent model call failed after 6 attempts/);
+    assert.equal(calls, 6);
+    assert.deepEqual(ctx.budget.used, { tokens: 0, cost: 0, requests: 6 });
+  });
+
+  it('does not retry non-retryable failures', async () => {
+    let calls = 0;
+    const ctx = createTestContext({
+      callModel: (() => {
+        calls++;
+        const error: any = new Error('unauthorized');
+        error.status = 401;
+        throw error;
+      }) as any,
+    });
+
+    const result = await spawnSubAgent(ctx, 'task', {
+      retry: {
+        sleep: async () => {
+          throw new Error('should not sleep');
+        },
+      },
+    });
+
+    assert.match(result, /^ERROR: sub-agent model call failed —/);
+    assert.equal(calls, 1);
+    assert.deepEqual(ctx.budget.used, { tokens: 0, cost: 0, requests: 1 });
   });
 });

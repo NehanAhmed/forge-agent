@@ -1,5 +1,6 @@
 import { MODEL, COMPACTION_THRESHOLD_TOKENS, COMPACTION_KEEP_RECENT, SYSTEM_PROMPT } from './constants.js';
 import { getClient } from './client.js';
+import { COMPACTION_RETRY_POLICY, withModelRetry, type RetryOptions } from './retry.js';
 import type { ConversationState } from '@openrouter/agent';
 
 export interface CompactionConfig {
@@ -119,6 +120,10 @@ function generateId(): string {
   return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
+function formatRetryDelay(ms: number): string {
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${Math.round(ms / 1000)}s`;
+}
+
 function toSystemItem(msg: SDKMessage) {
   return {
     id: generateId(),
@@ -158,6 +163,7 @@ export async function compactIfNeeded(
   state: ConversationState,
   config: CompactionConfig = DEFAULT_COMPACTION_CONFIG,
   callModelOverride?: CompactionCallModel,
+  retryOptions: RetryOptions = {},
 ): Promise<ConversationState> {
   const legacyMessages = stateToLegacyMessages(state);
   const estimatedTokens = JSON.stringify(legacyMessages).length / 4;
@@ -177,20 +183,43 @@ export async function compactIfNeeded(
 
   try {
     const callModel = callModelOverride ?? ((request: Parameters<ModelCall>[0]) => getClient().callModel(request));
-    const summaryResponse = await callModel({
-      model: config.model,
-      input: [
-        {
-          role: 'system',
-          content:
-            "Summarize this conversation history concisely. You MUST explicitly state, verbatim or near-verbatim, what the user's most recent request/goal was — this is the single most important thing to preserve. Also preserve: file paths touched, key decisions made, and any unresolved sub-tasks. Discard: verbose reasoning, redundant tool output, and repeated file contents already summarized elsewhere.",
-        } as any,
-        { role: 'user', content: JSON.stringify(toSummarize) } as any,
-      ],
-      tools: [],
-    });
-
-    const summary = await summaryResponse.getText();
+    const summary = await withModelRetry(
+      async () => {
+        let summaryResponse: ReturnType<CompactionCallModel> | undefined;
+        try {
+          summaryResponse = await callModel({
+            model: config.model,
+            input: [
+              {
+                role: 'system',
+                content:
+                  "Summarize this conversation history concisely. You MUST explicitly state, verbatim or near-verbatim, what the user's most recent request/goal was — this is the single most important thing to preserve. Also preserve: file paths touched, key decisions made, and any unresolved sub-tasks. Discard: verbose reasoning, redundant tool output, and repeated file contents already summarized elsewhere.",
+              } as any,
+              { role: 'user', content: JSON.stringify(toSummarize) } as any,
+            ],
+            tools: [],
+          });
+          return await summaryResponse.getText();
+        } catch (error) {
+          try {
+            await summaryResponse?.cancel();
+          } catch {
+            // Cancellation is best-effort; the retry loop must not fail because of it.
+          }
+          throw error;
+        }
+      },
+      {
+        ...retryOptions,
+        policy: retryOptions.policy ?? COMPACTION_RETRY_POLICY,
+        onRetry: info => {
+          retryOptions.onRetry?.(info);
+          console.log(
+            `[compaction] model call failed (attempt ${info.retry}/${info.maxRetries + 1}), retrying in ${formatRetryDelay(info.delayMs)}: ${info.error.category}${info.error.status !== undefined ? ` ${info.error.status}` : ''}`,
+          );
+        },
+      },
+    );
 
     if (!summary) {
       console.log('[compaction] empty summary returned, skipping compaction this round.');
