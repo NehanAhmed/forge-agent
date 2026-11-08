@@ -101,6 +101,8 @@ session. Commands: `/help`, `/clear`, `/new`, `/sessions`, `/models`, `/model <i
 - Handles the git basics itself: status, diff, stage, commit. It never pushes, resets, or
   amends.
 - Splits large jobs into child tasks, with limits on depth and count per tree.
+- Retries transient model failures (network drops, rate limits, upstream 5xx) with
+  backoff, and resumes mid-stream work from saved state when possible.
 - Keeps task state on disk, so a restart does not lose queued work.
 
 ## Safety

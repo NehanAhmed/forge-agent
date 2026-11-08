@@ -159,6 +159,33 @@ describe('Phase 2: Headless runAgent & Abort Handling', () => {
     assert.equal(result.outcome, 'cancelled');
   });
 
+  it('retries a transient model failure and completes', async () => {
+    let calls = 0;
+    const ctx = createMockContext({
+      callModel: (() => {
+        calls++;
+        if (calls === 1) {
+          const error: any = new Error('rate limited');
+          error.status = 429;
+          error.headers = { 'retry-after': '0' };
+          throw error;
+        }
+        return createFakeModelCall('Recovered after retry', {
+          inputTokens: 10,
+          outputTokens: 5,
+          cost: 0.0005,
+        })();
+      }) as any,
+    });
+
+    const result = await runAgentHeadless('Do something', ctx);
+
+    assert.equal(result.outcome, 'done');
+    assert.equal(result.summary, 'Recovered after retry');
+    assert.equal(result.usage.requests, 2);
+    assert.equal(calls, 2);
+  });
+
   it('fails with budget_exceeded when budget cannot spend', async () => {
     const budget = createBudget({ maxRequests: 1 });
     budget.record({ requests: 1 }); // Exhaust requests
