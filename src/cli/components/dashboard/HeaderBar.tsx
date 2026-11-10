@@ -65,7 +65,7 @@ export function HeaderBar({ tasks, approvalsCount, filter, modelName, theme, gly
     const parts: Segment[] = [];
 
     // Counters keep the cream label and only tint the status glyph: the tinted
-    // glyphs stay readable on the olive header while the text keeps contrast.
+    // glyphs stay readable on the red header while the text keeps contrast.
     const pushCount = (glyph: string, tint: string | undefined, label: string) => {
       if (parts.length > 0) parts.push({ text: ` ${glyphs.bullet} `, color: theme.muted });
       parts.push({ text: `${glyph} `, color: tint });

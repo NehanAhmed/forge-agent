@@ -23,22 +23,22 @@ export interface Theme {
 /**
  * Forge's palette follows the 60-30-10 rule:
  *
- * - 60% dominant `#283618` — the dark olive canvas behind the main panes.
- * - 30% secondary `#606c38` — header, key bar, borders and selected rows.
- * - 10% accent `#fefae0` — primary text, the wordmark and focus highlights.
+ * - 60% dominant `#1e1e24` — the charcoal canvas behind the main panes.
+ * - 30% secondary `#92140c` — header, key bar, borders and selected rows.
+ * - 10% accent `#fff8f0` — primary text, the wordmark and focus highlights.
  *
  * `muted` and the semantic colours are tints of the same family so alerts stay
  * legible without introducing a competing hue.
  */
 export const PALETTE = {
-  dominant: '#283618',
-  secondary: '#606c38',
-  accent: '#fefae0',
-  muted: '#cfd8bb',
-  success: '#b5c99a',
-  warning: '#e0a458',
-  error: '#e2725b',
-  info: '#9fb8ad',
+  dominant: '#1e1e24',
+  secondary: '#92140c',
+  accent: '#fff8f0',
+  muted: '#b3ada8',
+  success: '#9ec49a',
+  warning: '#e6b566',
+  error: '#ffb4a8',
+  info: '#a6c8d8',
 } as const;
 
 export interface Glyphs {

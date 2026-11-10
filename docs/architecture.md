@@ -181,9 +181,9 @@ The dashboard is split so most behavior can be tested without a terminal:
   (`useTaskStore`, `useTaskLogs`, `useClock`) connect them to the manager.
 - Layout adapts at 64+ columns (list + detail), 50–63 columns (single pane), and below
   50×10 (a recovery screen). Rows never wrap.
-- Theme: the dashboard uses a 60-30-10 palette defined in `src/ui/theme.ts` — 60% deep
-  olive canvas (`#283618`), 30% olive chrome and selection surfaces (`#606c38`), and 10%
-  cream text and highlights (`#fefae0`). Status colours are semantic tints of the same
+- Theme: the dashboard uses a 60-30-10 palette defined in `src/ui/theme.ts` — 60% charcoal
+  canvas (`#1e1e24`), 30% deep red chrome and selection surfaces (`#92140c`), and 10% warm
+  cream text and highlights (`#fff8f0`). Status colours are semantic tints of the same
   family; `NO_COLOR` clears every slot.
 - Accessibility: semantic color slots, `NO_COLOR`, ASCII glyph mode, `INK_SCREEN_READER`
   for a linear layout, a visible selection marker, and ARIA roles on the list and input.
