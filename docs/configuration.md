@@ -35,8 +35,8 @@ Settings apply to the next `forge` process you start.
 
 ## Model
 
-| Key | Default | Meaning |
-| --- | --- | --- |
+| Key     | Default                                  | Meaning                            |
+| ------- | ---------------------------------------- | ---------------------------------- |
 | `model` | `nvidia/nemotron-3-ultra-550b-a55b:free` | Model used for new dashboard tasks |
 
 Pick a model from the dashboard with `/models` or `M`; the selection is written here so it
@@ -47,24 +47,24 @@ survives restarts. Chat keeps its per-session choice separately in the project's
 
 Child tasks are created by the agent with `spawn_task`, not by hand.
 
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `children.maxDepth` | `2` | How many levels of children a task tree may have |
-| `children.maxPerTask` | `4` | Direct children one task may spawn |
-| `children.maxPerTree` | `10` | Total tasks in one tree, including the root |
+| Key                   | Default | Meaning                                          |
+| --------------------- | ------- | ------------------------------------------------ |
+| `children.maxDepth`   | `2`     | How many levels of children a task tree may have |
+| `children.maxPerTask` | `4`     | Direct children one task may spawn               |
+| `children.maxPerTree` | `10`    | Total tasks in one tree, including the root      |
 
 ## Interface
 
 These affect the dashboard only; chat ignores them.
 
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `ui.ascii` | `false` | Use plain ASCII glyphs instead of Unicode |
-| `ui.timestamps` | `true` | Show a timestamp on each log line |
-| `ui.showCost` | `true` | Show accumulated cost in task details |
-| `ui.compactLog` | `true` | Wrap long entries and collapse their newlines; `false` preserves line breaks |
-| `ui.alternateScreen` | `true` | Run the dashboard in the alternate terminal buffer |
-| `ui.logWindow` | `2000` | Log entries kept per task for display |
+| Key                  | Default | Meaning                                                                      |
+| -------------------- | ------- | ---------------------------------------------------------------------------- |
+| `ui.ascii`           | `false` | Use plain ASCII glyphs instead of Unicode                                    |
+| `ui.timestamps`      | `true`  | Show a timestamp on each log line                                            |
+| `ui.showCost`        | `true`  | Show accumulated cost in task details                                        |
+| `ui.compactLog`      | `true`  | Wrap long entries and collapse their newlines; `false` preserves line breaks |
+| `ui.alternateScreen` | `true`  | Run the dashboard in the alternate terminal buffer                           |
+| `ui.logWindow`       | `2000`  | Log entries kept per task for display                                        |
 
 Values of the wrong type fall back to the default; `logWindow` must be a positive number.
 
@@ -72,13 +72,33 @@ Two keys are read from the file but not yet connected to behavior: `ui.bell` (de
 `false`) and `ui.renderBatchMs` (default `50`). Leave them out unless you are working on
 the code.
 
+## Terminal font
+
+The package bundles JetBrains Mono Regular and Bold under `assets/fonts/` together with the
+SIL Open Font License (`OFL.txt`). `forge font install` copies both files into the per-user
+font directory and registers them with the OS:
+
+| Platform | Directory                                        | Registration                                              |
+| -------- | ------------------------------------------------ | --------------------------------------------------------- |
+| Windows  | `%LOCALAPPDATA%\Microsoft\Windows\Fonts`         | `HKCU\Software\Microsoft\Windows NT\CurrentVersion\Fonts` |
+| macOS    | `~/Library/Fonts`                                | Picked up automatically                                   |
+| Linux    | `$XDG_DATA_HOME/fonts` or `~/.local/share/fonts` | `fc-cache -f`                                             |
+
+Flags: `--dir <path>` overrides the destination and `--no-register` copies the files
+without touching the OS. `forge font path` prints the per-user directory.
+
+Registering the font does not select it. Set it in your terminal profile (Windows Terminal,
+iTerm2, Terminal.app, GNOME Terminal, Konsole) or with
+`"terminal.integrated.fontFamily": "JetBrains Mono"` in VS Code. A CLI cannot set the
+terminal emulator's font face portably, so this step stays manual.
+
 ## Environment variables
 
-| Variable | Effect |
-| --- | --- |
-| `OPENROUTER_API_KEY` | API key. Overrides the key in `~/.forge/config.json` |
-| `NO_COLOR` | Any value disables color output; selection stays visible |
-| `INK_SCREEN_READER` | `true` switches to a linear, ASCII, no-animation layout |
+| Variable             | Effect                                                   |
+| -------------------- | -------------------------------------------------------- |
+| `OPENROUTER_API_KEY` | API key. Overrides the key in `~/.forge/config.json`     |
+| `NO_COLOR`           | Any value disables color output; selection stays visible |
+| `INK_SCREEN_READER`  | `true` switches to a linear, ASCII, no-animation layout  |
 
 The dashboard also needs a real TTY. Redirected output exits with a message instead of
 rendering a broken screen.
@@ -99,25 +119,25 @@ If none is found, the process exits with an error that names both options.
 These are not configurable through `config.json` today; change them in the source if you
 need to.
 
-| Limit | Value | Where |
-| --- | --- | --- |
-| Concurrent tasks | `2` | `TaskManager` constructor |
-| Steps per agent run | `50` | `src/core/headless.ts` |
-| Requests per task tree | `60` | `TREE_BUDGET_LIMITS`, `src/core/task-manager.ts` |
-| Tokens per task tree | `1,000,000` | `TREE_BUDGET_LIMITS`, `src/core/task-manager.ts` |
-| In-memory log entries | `2000` | `TaskManager` |
-| Task state save debounce | `500 ms` | `TaskManager` |
+| Limit                    | Value       | Where                                            |
+| ------------------------ | ----------- | ------------------------------------------------ |
+| Concurrent tasks         | `2`         | `TaskManager` constructor                        |
+| Steps per agent run      | `50`        | `src/core/headless.ts`                           |
+| Requests per task tree   | `60`        | `TREE_BUDGET_LIMITS`, `src/core/task-manager.ts` |
+| Tokens per task tree     | `1,000,000` | `TREE_BUDGET_LIMITS`, `src/core/task-manager.ts` |
+| In-memory log entries    | `2000`      | `TaskManager`                                    |
+| Task state save debounce | `500 ms`    | `TaskManager`                                    |
 
 ## What lives where
 
-| Path | Contents | Scope |
-| --- | --- | --- |
-| `~/.forge/config.json` | API key and settings | Global |
-| `~/.forge/projects/<key>/project.json` | Exact canonical path and creation time | Per project |
-| `~/.forge/projects/<key>/tasks/` | Task index, per-task logs and session state | Per project |
-| `~/.forge/projects/<key>/worktrees/` | Task worktrees and `agent/task-*` branches | Per project |
-| `~/.forge/projects/<key>/meta/meta.json` | Chat session titles and chosen models | Per project |
-| `.agent-sessions/` | Chat session state | Per project |
+| Path                                     | Contents                                    | Scope       |
+| ---------------------------------------- | ------------------------------------------- | ----------- |
+| `~/.forge/config.json`                   | API key and settings                        | Global      |
+| `~/.forge/projects/<key>/project.json`   | Exact canonical path and creation time      | Per project |
+| `~/.forge/projects/<key>/tasks/`         | Task index, per-task logs and session state | Per project |
+| `~/.forge/projects/<key>/worktrees/`     | Task worktrees and `agent/task-*` branches  | Per project |
+| `~/.forge/projects/<key>/meta/meta.json` | Chat session titles and chosen models       | Per project |
+| `.agent-sessions/`                       | Chat session state                          | Per project |
 
 `<key>` is `<slug>-<hash12>`, where the slug is a sanitized version of the directory name
 and the hash is derived from the canonical path. Because the key is deterministic, opening

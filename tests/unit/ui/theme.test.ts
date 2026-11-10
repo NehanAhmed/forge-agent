@@ -1,20 +1,24 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createGlyphs, createTheme, logColor, logGlyph, statusColor } from '../../../src/ui/theme.js';
+import { createGlyphs, createTheme, logColor, logGlyph, PALETTE, statusColor } from '../../../src/ui/theme.js';
 
 describe('UI theme', () => {
   it('disables colour when NO_COLOR is set or explicitly requested', () => {
     const noColor = createTheme({ env: { NO_COLOR: '1' } });
     assert.equal(noColor.noColor, true);
     assert.equal(noColor.accent, undefined);
+    assert.equal(noColor.background, undefined);
+    assert.equal(noColor.surface, undefined);
 
     const forced = createTheme({ noColor: true, env: {} });
     assert.equal(forced.noColor, true);
 
     const color = createTheme({ env: {} });
     assert.equal(color.noColor, false);
-    assert.equal(color.accent, 'cyan');
-    assert.equal(color.error, 'redBright');
+    assert.equal(color.background, PALETTE.dominant);
+    assert.equal(color.surface, PALETTE.secondary);
+    assert.equal(color.accent, PALETTE.accent);
+    assert.equal(color.error, PALETTE.error);
   });
 
   it('returns ASCII and Unicode glyph sets', () => {

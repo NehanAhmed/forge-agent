@@ -21,7 +21,7 @@ export function TooSmall({ columns, rows, theme, help = false, ascii = false }: 
         <Text bold color={theme.accent}>
           keys
         </Text>
-        <Text wrap="truncate">
+        <Text color={theme.text} wrap="truncate">
           {truncateCells(`? / q close${ascii ? ' | ' : ' · '}resize to at least 50x10`, width)}
         </Text>
       </Box>
@@ -33,8 +33,10 @@ export function TooSmall({ columns, rows, theme, help = false, ascii = false }: 
       <Text bold color={theme.accent}>
         forge
       </Text>
-      <Text wrap="truncate">{truncateCells(`Terminal too small (${size}). Need at least 50x10.`, width)}</Text>
-      <Text dimColor wrap="truncate">
+      <Text color={theme.text} wrap="truncate">
+        {truncateCells(`Terminal too small (${size}). Need at least 50x10.`, width)}
+      </Text>
+      <Text color={theme.muted} wrap="truncate">
         {truncateCells('Resize the terminal, or press q to quit.', width)}
       </Text>
     </Box>

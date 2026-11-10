@@ -194,6 +194,7 @@ export function ModelPickerModal({
         height={layout.height}
         borderStyle={layout.bordered ? 'round' : undefined}
         borderColor={activeTheme.accent}
+        backgroundColor={activeTheme.surface}
         paddingX={layout.paddingX}
         overflow="hidden"
       >
@@ -202,20 +203,22 @@ export function ModelPickerModal({
             <Text bold color={activeTheme.accent}>
               {fitCells('Select model', titleWidth)}
             </Text>
-            <Text dimColor>{truncateCells(hint, Math.max(1, layout.contentWidth - titleWidth))}</Text>
+            <Text color={activeTheme.muted}>{truncateCells(hint, Math.max(1, layout.contentWidth - titleWidth))}</Text>
           </Box>
         )}
 
         {layout.showFilter && (
           <Box width={layout.contentWidth}>
-            <Text dimColor>{filterPrefix}</Text>
-            <Text>{fitCells(filter + cursor, filterValueWidth)}</Text>
+            <Text color={activeTheme.muted}>{filterPrefix}</Text>
+            <Text bold color={activeTheme.accent}>
+              {fitCells(filter + cursor, filterValueWidth)}
+            </Text>
           </Box>
         )}
 
         <Box flexDirection="column" width={layout.contentWidth} height={layout.listHeight} overflow="hidden">
           {filteredModels.length === 0 ? (
-            <Text dimColor wrap="truncate">
+            <Text color={activeTheme.muted} wrap="truncate">
               {fitCells(emptyText, layout.contentWidth)}
             </Text>
           ) : (
@@ -227,11 +230,16 @@ export function ModelPickerModal({
               const line = `${selected ? activeGlyphs.selected : ' '} ${model.name}${marker}`;
 
               return (
-                <Box key={model.id} width={layout.contentWidth} aria-state={{ selected }}>
+                <Box
+                  key={model.id}
+                  width={layout.contentWidth}
+                  backgroundColor={selected ? activeTheme.accent : undefined}
+                  aria-state={{ selected }}
+                >
                   <Text
-                    inverse={selected}
+                    inverse={selected && !activeTheme.accent}
                     bold={selected}
-                    color={selected ? activeTheme.focus : isCurrent ? activeTheme.success : undefined}
+                    color={selected ? activeTheme.background : isCurrent ? activeTheme.success : activeTheme.text}
                     wrap="truncate"
                   >
                     {fitCells(line, layout.contentWidth)}
@@ -243,13 +251,13 @@ export function ModelPickerModal({
         </Box>
 
         {layout.showDescription && (
-          <Text dimColor wrap="truncate">
+          <Text color={activeTheme.muted} wrap="truncate">
             {fitCells(current?.description || current?.id || '', layout.contentWidth)}
           </Text>
         )}
 
         {layout.showFooter && (
-          <Text dimColor wrap="truncate">
+          <Text color={activeTheme.muted} wrap="truncate">
             {fitCells(footer, layout.contentWidth)}
           </Text>
         )}

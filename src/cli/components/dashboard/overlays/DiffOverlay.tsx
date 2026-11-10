@@ -16,11 +16,11 @@ export interface DiffOverlayProps {
 
 function lineColor(line: string, theme: Theme): string | undefined {
   if (line.startsWith('+++') || line.startsWith('---')) return theme.muted;
-  if (line.startsWith('@@')) return theme.accent;
+  if (line.startsWith('@@')) return theme.info;
   if (line.startsWith('+')) return theme.success;
   if (line.startsWith('-')) return theme.error;
   if (line.startsWith('diff --git') || line.startsWith('index ')) return theme.muted;
-  return undefined;
+  return theme.text;
 }
 
 export function DiffOverlay({ title, lines, top, width, height, theme, loading, error }: DiffOverlayProps) {
@@ -35,7 +35,7 @@ export function DiffOverlay({ title, lines, top, width, height, theme, loading, 
         <Text bold color={theme.accent}>
           {truncateCells(title, Math.max(1, textWidth - 18))}
         </Text>
-        <Text dimColor>
+        <Text color={theme.muted}>
           {lines.length > 0 ? `${clampedTop + 1}-${Math.min(lines.length, clampedTop + viewport)}/${lines.length}` : ''}
         </Text>
       </Box>
@@ -45,9 +45,9 @@ export function DiffOverlay({ title, lines, top, width, height, theme, loading, 
           {truncateCells(error, textWidth)}
         </Text>
       ) : loading ? (
-        <Text dimColor>Loading diff…</Text>
+        <Text color={theme.muted}>Loading diff…</Text>
       ) : visible.length === 0 ? (
-        <Text dimColor>No changes.</Text>
+        <Text color={theme.muted}>No changes.</Text>
       ) : (
         visible.map((line, index) => (
           <Text key={`${clampedTop + index}`} color={lineColor(line, theme)} wrap="truncate">
