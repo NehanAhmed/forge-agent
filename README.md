@@ -39,6 +39,33 @@ brew install ripgrep                            # macOS
 sudo apt install ripgrep                        # Debian / Ubuntu
 ```
 
+### Terminal font
+
+Forge ships [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) (SIL Open Font
+License 1.1) so the dashboard looks the same everywhere. Install it into your per-user font
+directory with:
+
+```sh
+forge font install          # copy the fonts and register them with the OS
+forge font install --no-register   # copy only; register yourself later
+forge font install --dir ./fonts   # copy to a specific directory
+forge font path             # print the per-user font directory
+```
+
+Then select the font once in your terminal profile:
+
+- **Windows Terminal** — Settings → Profiles → Defaults → Appearance → Font face →
+  `JetBrains Mono`
+- **VS Code** — set `"terminal.integrated.fontFamily": "JetBrains Mono"`
+- **iTerm2** — Settings → Profiles → Text → Font → `JetBrains Mono`
+- **Terminal.app** — Settings → Profiles → Text → Font → `JetBrains Mono`
+- **GNOME Terminal** — Preferences → Profile → Text → Custom font → `JetBrains Mono`
+- **Konsole** — Edit Current Profile → Appearance → Font → `JetBrains Mono`
+
+Forge cannot change the terminal's font for you: the font face belongs to the terminal
+emulator, and there is no portable ANSI sequence for setting it. Bundling and installing the
+font, then pointing you at the right setting, is as far as a CLI can go.
+
 ## First run
 
 ```sh
@@ -61,19 +88,19 @@ is saved in `~/.forge/config.json`.
 
 ### Dashboard
 
-| Input | What it does |
-| --- | --- |
-| plain text | Start a task with that goal |
-| `/new [--read-only] [--shared] [--policy <p>] <goal>` | Start a task with explicit options |
-| `/open <n>` | Open a task and its log |
-| `/approve <n>` / `/deny <n>` | Answer the oldest pending approval for a task |
-| `/diff <n>` | Show the task's diff |
-| `/merge <n>` / `/discard <n>` | Merge the branch, or delete it and its worktree |
-| `/resume <n>` / `/cancel <n>` | Resume an interrupted task, or cancel a task and its children |
-| `/policy <n> [ask\|auto\|read_only]` | Set a task's approval policy; omit the mode to toggle manual/auto |
-| `/auto <n>` / `/manual <n>` | Shortcut for auto or manual approvals |
-| `/models` | Open the model picker |
-| `/help` / `/quit` | Show commands / leave |
+| Input                                                 | What it does                                                      |
+| ----------------------------------------------------- | ----------------------------------------------------------------- |
+| plain text                                            | Start a task with that goal                                       |
+| `/new [--read-only] [--shared] [--policy <p>] <goal>` | Start a task with explicit options                                |
+| `/open <n>`                                           | Open a task and its log                                           |
+| `/approve <n>` / `/deny <n>`                          | Answer the oldest pending approval for a task                     |
+| `/diff <n>`                                           | Show the task's diff                                              |
+| `/merge <n>` / `/discard <n>`                         | Merge the branch, or delete it and its worktree                   |
+| `/resume <n>` / `/cancel <n>`                         | Resume an interrupted task, or cancel a task and its children     |
+| `/policy <n> [ask\|auto\|read_only]`                  | Set a task's approval policy; omit the mode to toggle manual/auto |
+| `/auto <n>` / `/manual <n>`                           | Shortcut for auto or manual approvals                             |
+| `/models`                                             | Open the model picker                                             |
+| `/help` / `/quit`                                     | Show commands / leave                                             |
 
 Keys: `↑`/`↓` to move, `←`/`→` to fold a task tree, `Enter` to open a task, `a` for
 approvals, `p` to toggle manual/auto approvals, `M` to choose a model, `Tab` to switch
@@ -132,14 +159,14 @@ Forge scopes tasks, worktrees, and session metadata to the directory it was open
 Each directory gets a folder named `<slug>-<hash12>`, derived from its canonical path, and
 `project.json` records the exact path.
 
-| Path | Contents |
-| --- | --- |
-| `.agent-sessions/` in the project | Chat session state |
-| `~/.forge/projects/<key>/tasks/` | Task index, logs, and per-task state |
-| `~/.forge/projects/<key>/worktrees/` | Task worktrees and `agent/task-*` branches |
+| Path                                     | Contents                                            |
+| ---------------------------------------- | --------------------------------------------------- |
+| `.agent-sessions/` in the project        | Chat session state                                  |
+| `~/.forge/projects/<key>/tasks/`         | Task index, logs, and per-task state                |
+| `~/.forge/projects/<key>/worktrees/`     | Task worktrees and `agent/task-*` branches          |
 | `~/.forge/projects/<key>/meta/meta.json` | Session titles and model choices for that directory |
-| `~/.forge/projects/<key>/project.json` | Exact canonical path the project folder belongs to |
-| `~/.forge/config.json` | API key and UI settings (global) |
+| `~/.forge/projects/<key>/project.json`   | Exact canonical path the project folder belongs to  |
+| `~/.forge/config.json`                   | API key and UI settings (global)                    |
 
 Add `.agent-sessions/` to your `.gitignore` if you use chat; everything else is stored
 outside the project. Deleting a task's worktree from the dashboard also removes its branch.

@@ -3,6 +3,7 @@ import { Box, Text } from 'ink';
 import type { VisibleRow } from '../../../ui/tree-builder.js';
 import type { TaskFilter } from '../../../ui/selection.js';
 import type { Glyphs, Theme } from '../../../ui/theme.js';
+import { statusColor } from '../../../ui/theme.js';
 import { getStatusGlyph, needsAttention } from '../../../ui/status-glyphs.js';
 import { cellWidth, fitCells, truncateCells } from '../../../ui/text.js';
 import { formatCost, formatDuration, statusLabel, taskElapsed } from '../../../ui/format.js';
@@ -39,7 +40,7 @@ export function TaskList({
   if (loading && rows.length === 0) {
     return (
       <Box width={width}>
-        <Text dimColor>{ascii ? 'Loading tasks...' : 'Loading tasks…'}</Text>
+        <Text color={theme.muted}>{ascii ? 'Loading tasks...' : 'Loading tasks…'}</Text>
       </Box>
     );
   }
@@ -47,7 +48,7 @@ export function TaskList({
   if (rows.length === 0) {
     return (
       <Box width={width}>
-        <Text dimColor>{filter === 'all' ? 'No tasks yet. Type a goal below.' : `No ${filter} tasks.`}</Text>
+        <Text color={theme.muted}>{filter === 'all' ? 'No tasks yet. Type a goal below.' : `No ${filter} tasks.`}</Text>
       </Box>
     );
   }
@@ -87,18 +88,29 @@ export function TaskList({
           <Box
             key={task.id}
             width={width}
+            backgroundColor={selected ? theme.selectionBackground : undefined}
             aria-role="listitem"
             aria-state={{ selected }}
             aria-label={`${statusLabel(task.status)} task ${task.displayId}: ${task.goal}${selected ? ', selected' : ''}`}
           >
-            <Text color={selected ? theme.focus : undefined} bold={selected}>
-              {prefix}
+            <Text color={selected ? theme.accent : theme.muted} bold={selected}>
+              {`${caret} ${indent}`}
             </Text>
-            {attentionText !== '' && <Text color={theme.warning}>{attentionText}</Text>}
-            <Text bold={selected} color={selected ? theme.focus : theme.text}>
+            <Text color={theme.muted}>{tree}</Text>
+            <Text color={selected ? theme.accent : theme.text}>{task.displayId}</Text>
+            <Text color={theme.muted}> </Text>
+            <Text
+              color={selected ? theme.accent : statusColor(task.status, theme)}
+              bold={task.status === 'waiting_approval' || task.status === 'failed'}
+            >
+              {statusGlyph}
+            </Text>
+            <Text color={theme.muted}> </Text>
+            {attentionText !== '' && <Text color={selected ? theme.accent : theme.warning}>{attentionText}</Text>}
+            <Text bold={selected} color={selected ? theme.accent : theme.text}>
               {paddedGoal}
             </Text>
-            {meta !== '' && <Text dimColor>{` ${meta}`}</Text>}
+            {meta !== '' && <Text color={theme.muted}>{` ${meta}`}</Text>}
           </Box>
         );
       })}

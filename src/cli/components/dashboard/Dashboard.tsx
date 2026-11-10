@@ -953,7 +953,7 @@ export function Dashboard({ client }: DashboardProps) {
   if (layout.mode === 'tiny') {
     const tinyHelp = overlay?.kind === 'help';
     return (
-      <Box flexDirection="column" width={columns} height={rows}>
+      <Box flexDirection="column" width={columns} height={rows} backgroundColor={theme.background}>
         <TooSmall columns={columns} rows={rows} theme={theme} help={tinyHelp} ascii={ascii} />
         <KeyBar
           hints={tinyHelp ? 'esc close' : `q quit${dot}? help${dot}M model`}
@@ -1004,7 +1004,7 @@ export function Dashboard({ client }: DashboardProps) {
           : `${nav} scroll${dot}f follow${dot}v verbose${dot}p policy${dot}M model${dot}enter follow-up${dot}esc back`;
 
   return (
-    <Box flexDirection="column" width={columns} height={rows} overflow="hidden">
+    <Box flexDirection="column" width={columns} height={rows} overflow="hidden" backgroundColor={theme.background}>
       <HeaderBar
         tasks={tasks}
         approvalsCount={approvals.length}
@@ -1096,7 +1096,7 @@ export function Dashboard({ client }: DashboardProps) {
                     onFollowUpSubmit={value => void submitFollowUp(value)}
                   />
                 ) : (
-                  <Text dimColor>Select a task to see its log.</Text>
+                  <Text color={theme.muted}>Select a task to see its log.</Text>
                 )}
               </Box>
             )}

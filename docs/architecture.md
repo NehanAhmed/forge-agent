@@ -56,14 +56,14 @@ dashboard subscribes to those events instead of polling.
 
 ### Lifecycle
 
-| State | Meaning |
-| --- | --- |
-| `queued` | Waiting for a slot |
-| `running` | The agent loop is executing |
-| `waiting_approval` | Blocked on a tool that needs a decision |
-| `done` | Finished successfully |
-| `failed` | Stopped with an error; resumable only when its `resumable` flag is set |
-| `cancelled` | Stopped by the user |
+| State              | Meaning                                                                |
+| ------------------ | ---------------------------------------------------------------------- |
+| `queued`           | Waiting for a slot                                                     |
+| `running`          | The agent loop is executing                                            |
+| `waiting_approval` | Blocked on a tool that needs a decision                                |
+| `done`             | Finished successfully                                                  |
+| `failed`           | Stopped with an error; resumable only when its `resumable` flag is set |
+| `cancelled`        | Stopped by the user                                                    |
 
 Transitions are enforced in `src/core/task.ts`: `queued → running → done | failed |
 cancelled`, with `running ↔ waiting_approval` while approvals are pending. Resuming a failed
@@ -154,14 +154,14 @@ The same retry policy covers `runAgentHeadless`, `runAgent`, `spawnSubAgent`, an
 
 `src/tools/definitions.ts` declares the schemas; `implementations.ts` does the work.
 
-| Tool | Risk |
-| --- | --- |
-| `read_file`, `search_code`, `git_status`, `git_diff` | read |
-| `run_bash` | exec |
-| `write_file`, `replace_string_in_file`, `replace_all_strings` | write |
-| `git_add`, `git_commit` | write |
-| `spawn_sub_agent` | read-only child agent |
-| `spawn_task`, `wait_for_tasks`, `get_task` | task control |
+| Tool                                                          | Risk                  |
+| ------------------------------------------------------------- | --------------------- |
+| `read_file`, `search_code`, `git_status`, `git_diff`          | read                  |
+| `run_bash`                                                    | exec                  |
+| `write_file`, `replace_string_in_file`, `replace_all_strings` | write                 |
+| `git_add`, `git_commit`                                       | write                 |
+| `spawn_sub_agent`                                             | read-only child agent |
+| `spawn_task`, `wait_for_tasks`, `get_task`                    | task control          |
 
 `search_code` shells out to `rg`, so ripgrep must be installed. File tools and `git_add`
 resolve their paths with `resolveSafePath` before touching the filesystem or git; `git_diff`
@@ -181,6 +181,10 @@ The dashboard is split so most behavior can be tested without a terminal:
   (`useTaskStore`, `useTaskLogs`, `useClock`) connect them to the manager.
 - Layout adapts at 64+ columns (list + detail), 50–63 columns (single pane), and below
   50×10 (a recovery screen). Rows never wrap.
+- Theme: the dashboard uses a 60-30-10 palette defined in `src/ui/theme.ts` — 60% charcoal
+  canvas (`#1e1e24`), 30% deep red chrome and selection surfaces (`#92140c`), and 10% warm
+  cream text and highlights (`#fff8f0`). Status colours are semantic tints of the same
+  family; `NO_COLOR` clears every slot.
 - Accessibility: semantic color slots, `NO_COLOR`, ASCII glyph mode, `INK_SCREEN_READER`
   for a linear layout, a visible selection marker, and ARIA roles on the list and input.
 

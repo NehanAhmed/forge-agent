@@ -48,6 +48,7 @@
   "author": "Nehan Ahmed",
   "files": [
     "dist",
+    "assets",
     "README.md",
     "LICENSE"
   ],

@@ -3,7 +3,7 @@ import { Box, Text } from 'ink';
 import type { Task } from '../../../core/task.js';
 import type { LogDisplayLine } from '../../../ui/log-view.js';
 import type { Glyphs, Theme } from '../../../ui/theme.js';
-import { logColor } from '../../../ui/theme.js';
+import { logColor, statusColor } from '../../../ui/theme.js';
 import { getStatusGlyph } from '../../../ui/status-glyphs.js';
 import { cellWidth, truncateCells } from '../../../ui/text.js';
 import { formatCost, formatDuration, policyLabel, statusLabel, taskElapsed } from '../../../ui/format.js';
@@ -86,7 +86,8 @@ export function TaskDetail({
     : [statusDetail, meta].filter(Boolean).join(` ${glyphs.bullet} `);
 
   const titleWidth = Math.max(10, width - cellWidth(statusText) - 4);
-  const title = `#${task.displayId} ${task.goal}`;
+  const idLabel = `#${task.displayId}`;
+  const goalWidth = Math.max(1, titleWidth - cellWidth(idLabel) - 1);
   const logHeight = Math.max(1, height - (followUpMode ? 4 : 3));
   const visibleLines = lines.slice(-logHeight);
 
@@ -99,38 +100,36 @@ export function TaskDetail({
       aria-label={`Task ${task.displayId}: ${task.goal}. Status ${statusText}.`}
     >
       <Box width={width} justifyContent="space-between">
-        <Text bold>{truncateCells(title, titleWidth)}</Text>
-        <Text
-          color={
-            task.status === 'failed' ? theme.error : task.status === 'waiting_approval' ? theme.warning : theme.muted
-          }
-        >
+        <Text bold color={theme.text}>
+          <Text color={theme.muted}>{idLabel}</Text> {truncateCells(task.goal, goalWidth)}
+        </Text>
+        <Text bold color={statusColor(task.status, theme)}>
           {statusGlyph} {statusText}
         </Text>
       </Box>
 
       <Box width={width}>
-        <Text dimColor={!task.error} color={task.error ? theme.error : undefined} wrap="truncate">
+        <Text color={task.error ? theme.error : theme.muted} wrap="truncate">
           {truncateCells(secondLine, width)}
         </Text>
       </Box>
 
-      <Text dimColor>{glyphs.separator.repeat(Math.max(1, width))}</Text>
+      <Text color={theme.separator}>{glyphs.separator.repeat(Math.max(1, width))}</Text>
 
       {error ? (
         <Text color={theme.error} wrap="truncate">
           Could not load log: {truncateCells(error, Math.max(1, width - 20))}
         </Text>
       ) : loading && lines.length === 0 ? (
-        <Text dimColor>{ascii ? 'Loading log...' : 'Loading log…'}</Text>
+        <Text color={theme.muted}>{ascii ? 'Loading log...' : 'Loading log…'}</Text>
       ) : visibleLines.length === 0 ? (
-        <Text dimColor>No output yet.</Text>
+        <Text color={theme.muted}>No output yet.</Text>
       ) : (
         visibleLines.map((line, index) => {
           const available = Math.max(1, width - cellWidth(line.prefix));
           return (
             <Box key={`${line.seq}-${index}`} width={width}>
-              <Text dimColor>{line.prefix}</Text>
+              <Text color={theme.muted}>{line.prefix}</Text>
               <Text color={logColor(line.entry.type, theme)} wrap="truncate">
                 {truncateCells(line.text, available)}
               </Text>

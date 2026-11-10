@@ -45,4 +45,20 @@ describe('CLI smoke tests', { skip: !hasBuiltCli() ? 'run pnpm build first' : fa
     const config = JSON.parse(fs.readFileSync(path.join(home, '.forge', 'config.json'), 'utf-8'));
     assert.equal(config.apiKey, 'test-key');
   });
+
+  it('prints the per-user font directory', t => {
+    const { result } = runCli(t, ['font', 'path']);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout.trim(), /Fonts|fonts/);
+  });
+
+  it('installs the bundled font into a custom directory without registering it', t => {
+    const target = tempDir(t, 'forge-font-install-');
+    const { result } = runCli(t, ['font', 'install', '--dir', target, '--no-register']);
+
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /JetBrains Mono/);
+    assert.ok(fs.existsSync(path.join(target, 'JetBrainsMono-Regular.ttf')));
+    assert.ok(fs.existsSync(path.join(target, 'JetBrainsMono-Bold.ttf')));
+  });
 });

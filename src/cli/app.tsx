@@ -28,6 +28,7 @@ import { getConfig } from '../core/config.js';
 import { Dashboard } from './components/dashboard/Dashboard.js';
 import { TaskManager } from '../core/task-manager.js';
 import { InProcessTaskClient } from '../core/task-client.js';
+import { formatFontInstallReport, installBundledFonts, userFontDir } from '../core/fonts.js';
 
 // --- config command: runs before anything else, exits early if matched ---
 const cliArgs = process.argv.slice(2);
@@ -52,6 +53,51 @@ if (cliArgs[0] === 'config' && cliArgs[1] === 'set-key') {
   });
   console.log('API key saved.');
   process.exit(0);
+}
+
+// --- font command: installs the bundled terminal font, then exits ---
+if (cliArgs[0] === 'font') {
+  const sub = cliArgs[1];
+
+  if (sub === 'path') {
+    console.log(userFontDir());
+    process.exit(0);
+  }
+
+  if (sub === 'install') {
+    let dir: string | undefined;
+    let register = true;
+    for (let i = 2; i < cliArgs.length; i += 1) {
+      const arg = cliArgs[i];
+      if (arg === '--no-register') {
+        register = false;
+      } else if (arg === '--dir') {
+        const value = cliArgs[i + 1];
+        if (!value || value.startsWith('--')) {
+          console.error('Usage: forge font install [--dir <path>] [--no-register]');
+          process.exit(1);
+        }
+        dir = path.resolve(value);
+        i += 1;
+      } else {
+        console.error(`Unknown option: ${arg ?? ''}`);
+        console.error('Usage: forge font install [--dir <path>] [--no-register]');
+        process.exit(1);
+      }
+    }
+
+    try {
+      const result = installBundledFonts({ targetDir: dir, register });
+      console.log(formatFontInstallReport(result));
+      process.exit(0);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  }
+
+  console.error('Usage: forge font <install|path>');
+  process.exit(1);
 }
 
 type DisplayEntry = {

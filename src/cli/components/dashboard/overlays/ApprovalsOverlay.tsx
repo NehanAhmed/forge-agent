@@ -6,6 +6,19 @@ import type { Glyphs, Theme } from '../../../../ui/theme.js';
 import { truncateCells, cellWidth } from '../../../../ui/text.js';
 import { statusLabel } from '../../../../ui/format.js';
 
+function riskColor(risk: string, theme: Theme): string | undefined {
+  switch (risk) {
+    case 'exec':
+      return theme.error;
+    case 'write':
+      return theme.warning;
+    case 'network':
+      return theme.info;
+    default:
+      return theme.success;
+  }
+}
+
 export interface ApprovalsOverlayProps {
   approvals: Approval[];
   tasks: Task[];
@@ -35,7 +48,7 @@ export function ApprovalsOverlay({
         <Text bold color={theme.accent}>
           Approvals
         </Text>
-        <Text dimColor>No pending approvals.</Text>
+        <Text color={theme.muted}>No pending approvals.</Text>
       </Box>
     );
   }
@@ -73,11 +86,11 @@ export function ApprovalsOverlay({
         <Text bold color={theme.warning}>
           {truncateCells(title, titleWidth)}
         </Text>
-        <Text dimColor>{headerHints}</Text>
+        <Text color={theme.muted}>{headerHints}</Text>
       </Box>
 
       {confirmingAll && (
-        <Text color={theme.warning}>
+        <Text bold color={theme.warning}>
           {pending
             ? 'Approving…'
             : `Approve all ${approvals.length} pending action${approvals.length === 1 ? '' : 's'}? y / n`}
@@ -101,28 +114,33 @@ export function ApprovalsOverlay({
           <Box
             key={approval.id}
             width={contentWidth}
+            backgroundColor={selected ? theme.selectionBackground : undefined}
             aria-role="listitem"
             aria-state={{ selected }}
             aria-label={`Approval for task ${task?.displayId ?? 'unknown'}: ${approval.tool}, ${approval.summary}`}
           >
-            <Text bold={selected} color={selected ? theme.focus : undefined}>
+            <Text bold={selected} color={selected ? theme.accent : theme.text}>
               {prefix}
             </Text>
-            {body !== '' && <Text wrap="truncate">{body}</Text>}
-            <Text dimColor>{suffix}</Text>
+            {body !== '' && (
+              <Text color={selected ? theme.accent : theme.text} wrap="truncate">
+                {body}
+              </Text>
+            )}
+            <Text color={selected ? theme.accent : riskColor(approval.risk, theme)}>{suffix}</Text>
           </Box>
         );
       })}
 
       {approvals.length > visible.length && (
-        <Text dimColor>
+        <Text color={theme.muted}>
           {[top > 0 ? 'more above…' : '', top + visible.length < approvals.length ? 'more below…' : '']
             .filter(Boolean)
             .join(` ${glyphs.bullet} `)}
         </Text>
       )}
 
-      <Text dimColor>
+      <Text color={theme.muted}>
         {truncateCells(
           `${index + 1}/${approvals.length} ${glyphs.bullet} task ${currentTask?.displayId ?? '?'}${
             currentTask ? ` ${glyphs.bullet} ${statusLabel(currentTask.status)}` : ''

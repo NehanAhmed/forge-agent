@@ -2,6 +2,13 @@ import type { TaskStatus } from '../core/task.js';
 
 export interface Theme {
   noColor: boolean;
+  /** Dominant surface (60%): the dashboard canvas. */
+  background?: string;
+  /** Secondary surface (30%): chrome bars, rails and selection blocks. */
+  surface?: string;
+  /** Background used for the selected task row. */
+  selectionBackground?: string;
+  /** Accent (10%): wordmark, focus and highlighted values. */
   accent?: string;
   focus?: string;
   text?: string;
@@ -12,6 +19,27 @@ export interface Theme {
   info?: string;
   separator?: string;
 }
+
+/**
+ * Forge's palette follows the 60-30-10 rule:
+ *
+ * - 60% dominant `#1e1e24` — the charcoal canvas behind the main panes.
+ * - 30% secondary `#92140c` — header, key bar, borders and selected rows.
+ * - 10% accent `#fff8f0` — primary text, the wordmark and focus highlights.
+ *
+ * `muted` and the semantic colours are tints of the same family so alerts stay
+ * legible without introducing a competing hue.
+ */
+export const PALETTE = {
+  dominant: '#1e1e24',
+  secondary: '#92140c',
+  accent: '#fff8f0',
+  muted: '#b3ada8',
+  success: '#9ec49a',
+  warning: '#e6b566',
+  error: '#ffb4a8',
+  info: '#a6c8d8',
+} as const;
 
 export interface Glyphs {
   selected: string;
@@ -38,15 +66,18 @@ export function createTheme(options: { noColor?: boolean; env?: NodeJS.ProcessEn
 
   return {
     noColor: !enabled,
-    accent: color(enabled, 'cyan'),
-    focus: color(enabled, 'cyanBright'),
-    text: undefined,
-    muted: color(enabled, 'gray'),
-    success: color(enabled, 'greenBright'),
-    warning: color(enabled, 'yellowBright'),
-    error: color(enabled, 'redBright'),
-    info: color(enabled, 'magentaBright'),
-    separator: color(enabled, 'gray'),
+    background: color(enabled, PALETTE.dominant),
+    surface: color(enabled, PALETTE.secondary),
+    selectionBackground: color(enabled, PALETTE.secondary),
+    accent: color(enabled, PALETTE.accent),
+    focus: color(enabled, PALETTE.accent),
+    text: color(enabled, PALETTE.accent),
+    muted: color(enabled, PALETTE.muted),
+    success: color(enabled, PALETTE.success),
+    warning: color(enabled, PALETTE.warning),
+    error: color(enabled, PALETTE.error),
+    info: color(enabled, PALETTE.info),
+    separator: color(enabled, PALETTE.secondary),
   };
 }
 

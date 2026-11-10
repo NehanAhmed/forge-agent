@@ -30,6 +30,7 @@ if (!pkg.devDependencies?.typescript) fail('typescript is missing from devDepend
 if (!pkg.devDependencies?.tsx) fail('tsx is missing from devDependencies');
 if (!pkg.bin?.forge) fail('bin.forge is missing');
 if (!pkg.files?.includes('dist')) fail('files must include dist');
+if (!pkg.files?.includes('assets')) fail('files must include assets for the bundled font');
 
 if (fs.existsSync('package-lock.json')) fail('package-lock.json must not be committed');
 if (fs.existsSync('src/index.ts')) fail('src/index.ts must not exist for a CLI-only package');
@@ -54,6 +55,14 @@ if (fs.existsSync(dashboardDir)) {
 
 const maps = walk('dist').filter(file => file.endsWith('.map'));
 if (maps.length > 0) fail(`source/declaration maps must not be shipped: ${maps.slice(0, 3).join(', ')}`);
+
+for (const font of [
+  'assets/fonts/JetBrainsMono-Regular.ttf',
+  'assets/fonts/JetBrainsMono-Bold.ttf',
+  'assets/fonts/OFL.txt',
+]) {
+  if (!fs.existsSync(font)) fail(`bundled font asset is missing: ${font}`);
+}
 
 const zod = JSON.parse(fs.readFileSync('node_modules/zod/package.json', 'utf8'));
 const [major, minor, patch] = zod.version.split('.').map(Number);

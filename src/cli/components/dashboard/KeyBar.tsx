@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import type { Glyphs, Theme } from '../../../ui/theme.js';
-import { truncateCells } from '../../../ui/text.js';
+import { cellWidth, truncateCells } from '../../../ui/text.js';
 
 export interface KeyBarNotice {
   kind: 'info' | 'error';
@@ -30,23 +30,39 @@ export function KeyBar({ hints, notice, confirm, width, theme, glyphs }: KeyBarP
   const ellipsis = glyphs.selected === '>' ? '...' : '…';
 
   if (confirm) {
-    const text = confirm.pending
+    const body = confirm.pending
       ? `${confirm.title} ${glyphs.bullet} working${ellipsis}`
-      : `${glyphs.approval} ${confirm.title} ${glyphs.bullet} ${confirm.target} ${glyphs.bullet} ${confirm.consequence} - y confirm ${glyphs.bullet} n cancel`;
-    content = <Text color={confirm.pending ? theme.muted : theme.warning}>{truncateCells(text, width - 2)}</Text>;
-    label = text;
+      : `${confirm.title} ${glyphs.bullet} ${confirm.target} ${glyphs.bullet} ${confirm.consequence} - y confirm ${glyphs.bullet} n cancel`;
+    const glyph = confirm.pending ? '' : `${glyphs.approval} `;
+    const available = Math.max(0, width - 2 - cellWidth(glyph));
+    content = (
+      <Text>
+        {glyph !== '' && (
+          <Text bold color={theme.warning}>
+            {glyph}
+          </Text>
+        )}
+        <Text bold={!confirm.pending} color={confirm.pending ? theme.muted : theme.text}>
+          {truncateCells(body, available)}
+        </Text>
+      </Text>
+    );
+    label = `${glyph}${body}`;
   } else if (notice) {
     const prefix = notice.kind === 'error' ? `${glyphs.approval} ` : 'i ';
-    const text = `${prefix}${notice.text}`;
+    const available = Math.max(0, width - 2 - cellWidth(prefix));
     content = (
-      <Text color={notice.kind === 'error' ? theme.error : theme.muted} wrap="truncate">
-        {truncateCells(text, width - 2)}
+      <Text wrap="truncate">
+        <Text bold color={notice.kind === 'error' ? theme.error : theme.info}>
+          {prefix}
+        </Text>
+        <Text color={theme.accent}>{truncateCells(notice.text, available)}</Text>
       </Text>
     );
     label = notice.text;
   } else {
     content = (
-      <Text dimColor wrap="truncate">
+      <Text color={theme.muted} wrap="truncate">
         {truncateCells(hints, width - 2)}
       </Text>
     );
@@ -54,7 +70,7 @@ export function KeyBar({ hints, notice, confirm, width, theme, glyphs }: KeyBarP
   }
 
   return (
-    <Box width="100%" height={1} paddingX={1} overflow="hidden" aria-label={label}>
+    <Box width="100%" height={1} paddingX={1} backgroundColor={theme.surface} overflow="hidden" aria-label={label}>
       {content}
     </Box>
   );
